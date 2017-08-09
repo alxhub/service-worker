@@ -5,6 +5,8 @@
   "author": "Alex Rickabaugh <alx+alxhub@alxandria.net>",
   "license": "MIT",
   "dependencies": {
+    "@types/jasmine": "^2.5.53",
+    "jasmine": "^2.7.0",
     "typescript": "^2.4.2"
   }
 }
