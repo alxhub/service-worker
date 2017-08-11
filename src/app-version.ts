@@ -1,9 +1,20 @@
+import {Context} from './adapter';
 import {Manifest} from './manifest';
 
-export class AppVersion {
-  constructor(private manifest: Manifest) {}
+import {AssetGroup} from './assets';
 
-  handleFetch(req: Request): Promise<Response|null> {
+export class AppVersion {
+  private hashes = new Map<string, string>();
+  private assetGroups: AssetGroup[];
+
+  constructor(private manifest: Manifest) {
+  }
+
+  initializeFully(): Promise<void> {
+    return null!;
+  }
+
+  handleFetch(req: Request, context: Context): Promise<Response|null> {
     return null!;
   }
 }

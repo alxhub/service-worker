@@ -1,5 +1,5 @@
 import {Adapter} from './adapter';
-import {Database, Table, NotFound} from './db';
+import {Database, Table, NotFound} from './database';
 
 export class CacheDatabase implements Database {
   private tables = new Map<string, Promise<CacheTable>>();

@@ -1,6 +1,6 @@
-import {Adapter} from './adapter';
+import {Adapter, Context} from './adapter';
 import {AppVersion} from './app-version';
-import {Database, Table} from './db';
+import {Database, Table} from './database';
 import {Manifest, ManifestHash, hashManifest} from './manifest';
 
 type ClientId = string;
@@ -19,6 +19,12 @@ export class Driver {
    * respond to requests.
    */
   private initialized: Promise<void>|null = null;
+  
+  /**
+   * Tracks whether the SW is in a safely initialized state. If this is `false`, requests will be allowed
+   * to fall through to the network.
+   */
+  private safeToServeTraffic: boolean = true;
 
   /**
    * Maps client IDs to the manifest hash of the application version being used to serve them. If a client
@@ -38,21 +44,56 @@ export class Driver {
    *
    * Valid after initialization has completed.
    */
-  latestHash: ManifestHash|null = null;
+  private latestHash: ManifestHash|null = null;
 
   constructor(private scope: ServiceWorkerGlobalScope, private adapter: Adapter, private db: Database) {
     // Listen to fetch events.
-    this.scope.addEventListener('fetch', (event) => this.handleFetch(event!));
+    this.scope.addEventListener('fetch', (event) => this.onFetch(event!));
   }
 
-  private handleFetch(event: FetchEvent): void {
-    // The first request causes SW initialization. Every other request will wait on that initialization.
-    // This happens every SW start, so it needs to be reasonably fast.
+  private onFetch(event: FetchEvent): void {
+    // If the SW is in a broken state where it's not safe to handle requests at all, returning causes
+    // the request to fall back on the network. This is preferred over `respondWith(fetch(req))` because
+    // the latter still shows in DevTools that the request was handled by the SW.
+    if (!this.safeToServeTraffic) {
+      return;
+    }
+
+    // Past this point, the SW commits to handling the request itself. This could still fail (and result
+    // in `safeToServeTraffic` being set to `false`), but even in that case the SW will still deliver a
+    // response.
+    event.respondWith(this.handleFetch(event));
+  }
+
+  private async handleFetch(event: FetchEvent): Promise<Response> {
     if (this.initialized === null) {
       this.initialized = this.initialize();
     }
+
+    try {
+      await this.initialized;
+    } catch (_) {
+      this.safeToServeTraffic = false;
+      return await fetch(event.request);
+    }
+
+    // Decide which version of the app to use to serve this request.
+    const appVersion = this.assignVersion(event);
+
+    // Handle the request. First try the AppVersion. If that doesn't work, fall back on the network.
+    let res = await appVersion.handleFetch(event.request, event);
+    
+    // The AppVersion will only return null if the manifest doesn't specify what to do about this
+    // request. In that case, just fall back on the network.
+    if (res === null) {
+      res = await fetch(event.request);
+    }
+    return res;
   }
 
+  /**
+   * Attempt to quickly reach a state where it's safe to serve responses.
+   */
   private async initialize(): Promise<void> {
     // On initialization, all of the serialized state is read out of the 'control' table. This includes:
     // - map of hashes to manifests of currently loaded application versions
@@ -98,17 +139,27 @@ export class Driver {
     // the manifest has been achieved. At this point, the `Driver` can have its internals hydrated from
     // the state.
 
-    // Map each hash to a new `AppVersion` instance for that manifest.
+    // Initialize the `versions` map by setting each hash to a new `AppVersion` instance for that manifest.
     Object.keys(manifests).forEach((hash: ManifestHash) => {
       const manifest = manifests[hash];
-      this.versions.set(hash, new AppVersion(manifest)); 
+
+      // If the manifest is newly initialized, an AppVersion may have already been created for it.
+      if (!this.versions.has(hash)) {
+        this.versions.set(hash, new AppVersion(manifest));
+      }
     });
 
-    /**
-     * Map each client ID to its associated hash. Along the way, verify that the hash is still valid
-     * for that clinet ID. It should not be possible for a client to still be associated with a hash
-     * that was since removed from the state.
-     */
+    // Wait for the scheduling of initialization of all versions in the manifest. Ordinarily this just
+    // schedules the initializations to happen during the next idle period, but in development mode
+    // this might actually wait for the full initialization.
+    const eachInit = Object
+      .keys(manifests)
+      .map((hash: ManifestHash) => this.versions.get(hash)!.initializeFully());
+    await Promise.all(eachInit);
+
+    // Map each client ID to its associated hash. Along the way, verify that the hash is still valid
+    // for that clinet ID. It should not be possible for a client to still be associated with a hash
+    // that was since removed from the state.
     Object.keys(assignments).forEach((clientId: ClientId) => {
       const hash = assignments[clientId];
       if (!this.versions.has(hash)) {
@@ -116,6 +167,11 @@ export class Driver {
       }
       this.clientVersionMap.set(clientId, hash);
     });
+
+    // Finally, assert that the latest version is in fact loaded.
+    if (!this.versions.has(latest.latest)) {
+      throw new Error(`Invariant violated (initialize): latest hash ${latest.latest} has no known manifest`);
+    }
   }
 
   private lookupVersionByHash(hash: ManifestHash, debugName: string = 'lookupVersionByHash'): AppVersion {
@@ -130,7 +186,7 @@ export class Driver {
    * Decide which version of the manifest to use for the event.
    */
   // TODO: make this not a Promise.
-  private assignVersion(event: FetchEvent): Promise<AppVersion> {
+  private assignVersion(event: FetchEvent): AppVersion {
     // First, check whether the event has a client ID. If it does, the version may already be associated.
     const clientId = event.clientId;
     if (clientId !== null) {
@@ -140,7 +196,7 @@ export class Driver {
         const hash = this.clientVersionMap.get(clientId)!;
 
         // TODO: make sure the version is valid.
-        return Promise.resolve(this.lookupVersionByHash(hash, 'assignVersion'));
+        return this.lookupVersionByHash(hash, 'assignVersion');
       } else {
         // This is the first time this client ID has been seen. Two cases apply. Either:
         // 1) the browser assigned a client ID at the time of the navigation request, and
@@ -165,7 +221,7 @@ export class Driver {
         // TODO: sync to DB.
 
         // Return the latest `AppVersion`.
-        return Promise.resolve(this.lookupVersionByHash(this.latestHash, 'assignVersion'));
+        return this.lookupVersionByHash(this.latestHash, 'assignVersion');
       }
     } else {
       // No client ID was associated with the request. This must be a navigation request
@@ -178,11 +234,29 @@ export class Driver {
       }
 
       // Return the latest `AppVersion`.
-      return Promise.resolve(this.lookupVersionByHash(this.latestHash, 'assignVersion'));
+      return this.lookupVersionByHash(this.latestHash, 'assignVersion');
     }
   }
 
-  private fetchLatestManifest(): Promise<Manifest> {
-    return null!;
+  /**
+   * Retrieve a copy of the latest manifest from the server.
+   */
+  private async fetchLatestManifest(): Promise<Manifest> {
+    const res = await this.scope.fetch('ngsw.json?ngsw-cache-bust=' + Math.random());
+    return await res.json();
+  }
+  
+  /**
+   * Schedule the SW's attempt to reach a fully prefetched state for the given AppVersion
+   * when the SW is not busy and has connectivity. This returns a Promise which must be
+   * awaited, as under some conditions the AppVersion might be initialized immediately.
+   */
+  private scheduleInitialization(appVersion: AppVersion): Promise<void> {
+    // TODO: better logic for detecting localhost.
+    if (this.scope.registration.scope.indexOf('://localhost') > -1) {
+      return appVersion.initializeFully();
+    }
+    // TODO: schedule this to happen asynchronously.
+    return appVersion.initializeFully();
   }
 }

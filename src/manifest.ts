@@ -3,18 +3,18 @@ export type ManifestHash = string;
 export interface Manifest {
   configVersion: number;
   appData?: Object;
-  assetGroups?: AssetGroup[];
-  dataGroups?: DataGroup[];
+  assetGroups?: AssetGroupConfig[];
+  dataGroups?: DataGroupConfig[];
   hashTable: Object;
 }
 
-export interface AssetGroup {
+export interface AssetGroupConfig {
   name: string;
   urls: string[];
   patterns: string[];
 }
 
-export interface DataGroup {
+export interface DataGroupConfig {
   name: string;
 }
 

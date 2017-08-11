@@ -7,3 +7,7 @@ export class Adapter {
     return new Response(body, init);
   }
 }
+
+export interface Context {
+	waitUntil(fn: Promise<any>): void;
+}
