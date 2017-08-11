@@ -1,7 +1,11 @@
 export interface Table {
   'delete'(key: string): Promise<boolean>;
   keys(): Promise<string[]>;
+
   read(key: string): Promise<Object>;
+  read<T>(key: string): Promise<T>;
+  read(key: string): Promise<any>;
+
   write(key: string, value: Object): Promise<void>;
 }
 

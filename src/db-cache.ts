@@ -55,7 +55,7 @@ export class CacheTable implements Table {
       .then(keys => keys.map(key => key.substr(1)));
   }
 
-  read(key: string): Promise<Object> {
+  read(key: string): Promise<any> {
     return this
       .cache
       .match(this.request(key))

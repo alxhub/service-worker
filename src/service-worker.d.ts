@@ -80,7 +80,8 @@ type WindowClientState = "hidden" | "visible" | "prerender" | "unloaded";
 // Fetch API
 
 interface FetchEvent extends Event {
-	request: Request;
+  clientId: string|null;
+  request: Request;
 	respondWith(response: Promise<Response>|Response): Promise<Response>;
 }
 
