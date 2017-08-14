@@ -8,5 +8,8 @@
     "@types/jasmine": "^2.5.53",
     "jasmine": "^2.7.0",
     "typescript": "^2.4.2"
+  },
+  "scripts": {
+    "test": "tsc && jasmine --config=jasmine.json"
   }
 }

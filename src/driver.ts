@@ -136,7 +136,7 @@ export class Driver {
     }
 
     // At this point, either the state has been loaded successfully, or fresh state with a new copy of
-    // the manifest has been achieved. At this point, the `Driver` can have its internals hydrated from
+    // the manifest has been produced. At this point, the `Driver` can have its internals hydrated from
     // the state.
 
     // Initialize the `versions` map by setting each hash to a new `AppVersion` instance for that manifest.

@@ -125,15 +125,6 @@ interface ServiceWorkerGlobalScope {
 
   caches: CacheStorage;
   clients: Clients;
-  onactivate: (event?: ExtendableEvent) => any;
-  onfetch: (event?: FetchEvent) => any;
-  oninstall: (event?: ExtendableEvent) => any;
-  onmessage: (event: MessageEvent) => any;
-  onnotificationclick: (event?: NotificationEvent) => any;
-  onnotificationclose: (event?: NotificationEvent) => any;
-  onpush: (event?: PushEvent) => any;
-  onpushsubscriptionchange: () => any;
-  onsync: (event?: SyncEvent) => any;
   registration: ServiceWorkerRegistration;
   
   addEventListener(event: 'activate', fn: (event?: ExtendableEvent) => any): void;
