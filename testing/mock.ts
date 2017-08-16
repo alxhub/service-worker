@@ -68,8 +68,9 @@ export class MockServerState {
   constructor(private resources: Map<string, Response>) {}
 
   async fetch(req: Request): Promise<Response> {
-    if (this.resources.has(req.url)) {
-      return this.resources.get(req.url)!;
+    const url = req.url.split('?')[0];
+    if (this.resources.has(url)) {
+      return this.resources.get(url)!;
     }
     return new MockResponse(null, {status: 404, statusText: 'Not Found'});
   }

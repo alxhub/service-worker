@@ -87,7 +87,6 @@ export class PrefetchAssetGroup implements AssetGroup {
         // resource). Return it directly.
         return cachedResponse;
       }
-
       // No already-cached response exists, so attempt a fetch/cache operation.
       const res = await this.fetchAndCacheOnce(req);
 
@@ -125,24 +124,40 @@ export class PrefetchAssetGroup implements AssetGroup {
       // Fetch the resource from the network (possibly hitting the HTTP cache).
       const networkResult = await this.scope.fetch(req);
 
-      // Hash the fetched resource (making sure to clone it so the response can be
-      // used/cached later).
-      const fetchedHash = sha1(await networkResult.clone().text());
+      // Decide whether a cache-busted request is necessary. It might be for two independent
+      // reasons: either the non-cache-busted request failed (hopefully transiently) or if the
+      // hash of the content retrieved does not match the canonical hash from the manifest. It's
+      // only valid to access the content of the first response if the request was successful.
+      let makeCacheBustedRequest: boolean = networkResult.ok;
+      if (makeCacheBustedRequest) {
+        // The request was successful. A cache-busted request is only necessary if the hashes
+        // don't match. Compare them, making sure to clone the response so it can be used later
+        // if it proves to be valid.
+        const fetchedHash = sha1(await networkResult.clone().text());
+        makeCacheBustedRequest = (fetchedHash !== canonicalHash);
+      }
 
-      // Compare the hashes.
-      if (canonicalHash !== fetchedHash) {
+      // Make a cache busted request to the network, if necessary.
+      if (makeCacheBustedRequest) {
         // Hash failure, the version that was retrieved under the default URL did not have the
         // hash expected. This could be because the HTTP cache got in the way and returned stale
         // data, or because the version on the server really doesn't match. A cache-busting
         // request will differentiate these two situations.
         // TODO: handle case where the URL has parameters already (unlikely for assets).
         const cacheBustedResult = await this.scope.fetch(req.url + '?ngsw-cache-bust=' + Math.random());
+        
+        // If the response was unsuccessful, there's nothing more that can be done.
+        if (!cacheBustedResult.ok) {
+          throw new Error(`Response not Ok (fetchFromNetwork): cache busted request for ${req.url} returned response ${cacheBustedResult.status} ${cacheBustedResult.statusText}`)
+        }
+
+        // Hash the contents.
         const cacheBustedHash = sha1(await cacheBustedResult.clone().text());
 
         // If the cache-busted version doesn't match, then the manifest is not an accurate
         // representation of the server's current set of files, and the SW should give up.
         if (canonicalHash !== cacheBustedHash) {
-          throw new Error(`Hash mismatch (${req.url}): expected ${canonicalHash}, got ${fetchedHash}`);
+          throw new Error(`Hash mismatch (${req.url}): expected ${canonicalHash}, got ${cacheBustedHash} (after cache busting)`);
         }
 
         // If it does match, then use the cache-busted result.

@@ -37,8 +37,12 @@ export class SwTestHarness implements ServiceWorkerGlobalScope, Adapter, Context
     this.server = server || EMPTY_SERVER_STATE;
   }
 
-  fetch(req: Request): Promise<Response> {
-    return this.server.fetch(req);
+  fetch(req: string|Request): Promise<Response> {
+    if (typeof req === 'string') {
+      return this.server.fetch(new MockRequest(req));
+    } else {
+      return this.server.fetch(req);
+    }
   }
 
   addEventListener(event: string, handler: Function): void {

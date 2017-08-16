@@ -50,6 +50,14 @@ describe('prefetch assets', () => {
     expect(await res1!.text()).toEqual('this is foo');
     expect(await res2!.text()).toEqual('this is bar');
   });
+  it('caches properly if resources are requested before initialization', async () => {
+    const res1 = await group.handleFetch(scope.newRequest('/foo.txt'), scope);
+    const res2 = await group.handleFetch(scope.newRequest('/bar.txt'), scope);
+    expect(await res1!.text()).toEqual('this is foo');
+    expect(await res2!.text()).toEqual('this is bar');
+    scope.updateServerState();
+    await group.fullyInitialize();
+  });
   it('throws if the server-side content does not match the manifest hash', async () => {
     const badHashFs = dist
       .extend()
@@ -64,7 +72,7 @@ describe('prefetch assets', () => {
       .build();
     group = new PrefetchAssetGroup(badScope, badScope, manifest.assetGroups![0], tmpHashTable(manifest), new CacheDatabase(badScope, badScope), 'test');
     const err = await errorFrom(group.fullyInitialize());
-    expect(err).toBeTruthy();
+    expect(err.message).toContain('Hash mismatch');
   });
 });
 

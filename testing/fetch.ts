@@ -16,7 +16,7 @@ export class MockBody implements Body {
     if (this._body !== null) {
       return JSON.parse(this._body);
     } else {
-      throw 'No body';
+      throw new Error('No body');
     }
   }
 
@@ -25,7 +25,7 @@ export class MockBody implements Body {
     if (this._body !== null) {
       return this._body;
     } else {
-      throw 'No body';
+      throw new Error('No body');
     }
   }
 
