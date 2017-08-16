@@ -50,4 +50,24 @@ describe('prefetch assets', () => {
     expect(await res1!.text()).toEqual('this is foo');
     expect(await res2!.text()).toEqual('this is bar');
   });
+  it('throws if the server-side content does not match the manifest hash', async () => {
+    const badHashFs = dist
+      .extend()
+      .addFile('/foo.txt', 'corrupted file')
+      .build();
+    const badServer = new MockServerStateBuilder()
+      .withManifest(manifest)
+      .withStaticFiles(badHashFs)
+      .build();
+    const badScope = new SwTestHarnessBuilder()
+      .withServerState(badServer)
+      .build();
+    group = new PrefetchAssetGroup(badScope, badScope, manifest.assetGroups![0], tmpHashTable(manifest), new CacheDatabase(badScope, badScope), 'test');
+    const err = await errorFrom(group.fullyInitialize());
+    expect(err).toBeTruthy();
+  });
 });
+
+function errorFrom(promise: Promise<any>): Promise<any> {
+  return promise.catch(err => err);
+}
