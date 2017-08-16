@@ -2,10 +2,10 @@ export type ManifestHash = string;
 
 export interface Manifest {
   configVersion: number;
-  appData?: Object;
+  appData?: {[key: string]: string};
   assetGroups?: AssetGroupConfig[];
   dataGroups?: DataGroupConfig[];
-  hashTable: Object;
+  hashTable: {[url: string]: string};
 }
 
 export interface AssetGroupConfig {

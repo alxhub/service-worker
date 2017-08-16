@@ -1,6 +1,25 @@
-export class MockCacheStorage implements CacheStorage {
+import {MockResponse} from './fetch';
 
+interface DehydratedResponse {
+  body: string|null;
+  status: number;
+  statusText: string;
+}
+
+type DehydratedCache = {[url: string]: DehydratedResponse};
+type DehydratedCacheStorage = {[name: string]: DehydratedCache};
+
+export class MockCacheStorage implements CacheStorage {
   private caches = new Map<string, MockCache>();
+
+  constructor(hydrateFrom?: string) {
+    if (hydrateFrom !== undefined) {
+      const hydrated = JSON.parse(hydrateFrom) as DehydratedCacheStorage;
+      Object.keys(hydrated).forEach(name => {
+        this.caches.set(name, new MockCache(hydrated[name]));
+      });
+    }
+  }
 
   async has(name: string): Promise<boolean> {
     return this.caches.has(name);
@@ -37,10 +56,28 @@ export class MockCacheStorage implements CacheStorage {
     }
     return false;
   }
+
+  dehydrate(): string {
+    const dehydrated: DehydratedCacheStorage = {};
+    Array.from(this.caches.keys()).forEach(name => {
+      const cache = this.caches.get(name)!;
+      dehydrated[name] = cache.dehydrate();
+    });
+    return JSON.stringify(dehydrated);
+  }
 }
 
 export class MockCache implements Cache {
   private cache = new Map<string, Response>();
+
+  constructor(hydrated?: DehydratedCache) {
+    if (hydrated !== undefined) {
+      Object.keys(hydrated).forEach(url => {
+        const resp = hydrated[url];
+        this.cache.set(url, new MockResponse(resp.body, {status: resp.status, statusText: resp.statusText}));
+      });
+    }
+  }
 
   async add(request: RequestInfo): Promise<void> {
     throw 'Not implemented';
@@ -89,5 +126,18 @@ export class MockCache implements Cache {
     const url = (typeof request === 'string' ? request : request.url);
     this.cache.set(url, response);
     return;
+  }
+
+  dehydrate(): DehydratedCache {
+    const dehydrated: DehydratedCache = {};
+    Array.from(this.cache.keys()).forEach(url => {
+      const resp = this.cache.get(url)! as MockResponse;
+      dehydrated[url] = {
+        body: resp._body,
+        status: resp.status,
+        statusText: resp.statusText,
+      };
+    });
+    return dehydrated;
   }
 }

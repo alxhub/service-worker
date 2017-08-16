@@ -1,23 +1,7 @@
-export class FetchMock {
-  private mock = new Map<string, Response>();
-
-  async fetch(req: Request): Promise<Response> {
-    if (!this.mock.has(req.url)) {
-      return new Response(null, {status: 404, statusText: 'Not Found'});
-    }
-    const res = this.mock.get(req.url)!;
-    return res.clone();
-  }
-
-  mockFetch(url: string, response: Response): void {
-    this.mock.set(url, response);
-  }
-}
-
 export class MockBody implements Body {
   bodyUsed: boolean = false;
 
-  constructor(protected _body: string|null) {}
+  constructor(public _body: string|null) {}
 
   async arrayBuffer(): Promise<ArrayBuffer> {
     throw 'Not implemented';

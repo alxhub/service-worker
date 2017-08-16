@@ -10,6 +10,6 @@
     "typescript": "^2.4.2"
   },
   "scripts": {
-    "test": "tsc && jasmine --config=jasmine.json"
+    "test": "rm -rf dist/ && tsc -p tsconfig.test.json && jasmine --config=jasmine.json"
   }
 }
