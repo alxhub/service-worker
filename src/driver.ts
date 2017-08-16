@@ -74,7 +74,7 @@ export class Driver {
       await this.initialized;
     } catch (_) {
       this.safeToServeTraffic = false;
-      return await fetch(event.request);
+      return await this.scope.fetch(event.request);
     }
 
     // Decide which version of the app to use to serve this request.
@@ -86,7 +86,7 @@ export class Driver {
     // The AppVersion will only return null if the manifest doesn't specify what to do about this
     // request. In that case, just fall back on the network.
     if (res === null) {
-      res = await fetch(event.request);
+      res = await this.scope.fetch(event.request);
     }
     return res;
   }
@@ -145,7 +145,7 @@ export class Driver {
 
       // If the manifest is newly initialized, an AppVersion may have already been created for it.
       if (!this.versions.has(hash)) {
-        this.versions.set(hash, new AppVersion(manifest));
+        this.versions.set(hash, new AppVersion(this.scope, this.adapter, this.db, manifest, hash));
       }
     });
 

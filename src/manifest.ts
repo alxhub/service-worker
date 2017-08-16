@@ -10,6 +10,7 @@ export interface Manifest {
 
 export interface AssetGroupConfig {
   name: string;
+  mode: 'prefetch'|'lazy';
   urls: string[];
   patterns: string[];
 }

@@ -64,6 +64,17 @@ export class SwTestHarness implements ServiceWorkerGlobalScope, Adapter, Context
   async skipWaiting(): Promise<void> {}
 
   waitUntil(promise: Promise<void>): void {}
+
+  handleFetch(req: Request, clientId?: string): [Promise<Response|undefined>, Promise<void>] {
+    const ctx = new OneTimeContext();
+    if (!this.eventHandlers.has('fetch')) {
+      throw new Error('No fetch handler registered');
+    }
+    const event = new MockFetchEvent(req, ctx, clientId || null);
+    this.eventHandlers.get('fetch')!.call(this, event);
+
+    return [event.response, ctx.ready]; 
+  }
 }
 
 interface StaticFile {
@@ -111,5 +122,36 @@ export class ConfigBuilder {
       assetGroups,
       hashTable,
     }
+  }
+}
+
+class OneTimeContext implements Context {
+  private queue: Promise<void>[] = [];
+
+  waitUntil(promise: Promise<void>): void {
+    this.queue.push(promise);
+  }
+
+  get ready(): Promise<void> {
+    return (async () => {
+      while (this.queue.length > 0) {
+        await this.queue.shift();
+      }
+    })();
+  } 
+}
+
+class MockFetchEvent {
+  response: Promise<Response|undefined> = Promise.resolve(undefined);
+
+  constructor(readonly request: Request, private ctx: Context, readonly clientId: string|null) {}
+
+  respondWith(promise: Promise<Response>): Promise<Response> {
+    this.response = promise;
+    return promise;
+  }
+
+  waitUntil(promise: Promise<void>): void {
+    this.ctx.waitUntil(promise);
   }
 }

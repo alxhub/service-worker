@@ -4,6 +4,7 @@ import {AssetGroupConfig} from './manifest';
 import {sha1} from './sha1';
 
 export interface AssetGroup {
+  readonly name: string;
   fullyInitialize(): Promise<void>;
 
   handleFetch(req: Request, ctx: Context): Promise<Response|null>;
@@ -13,7 +14,7 @@ export interface AssetGroup {
 export class PrefetchAssetGroup implements AssetGroup {
   /**
    * A deduplication cache, to make sure the SW never makes two network requests for the same
-   * resource at once.
+   * resource at once. Managed by `fetchAndCacheOnce`.
    */
   private inFlightRequests = new Map<string, Promise<Response>>();
 
@@ -28,6 +29,11 @@ export class PrefetchAssetGroup implements AssetGroup {
    */
   private cache: Promise<Cache>;
 
+  /**
+   * Group name from the configuration.
+   */
+  readonly name: string;
+
   constructor(
       private scope: ServiceWorkerGlobalScope,
       private adapter: Adapter,
@@ -35,7 +41,12 @@ export class PrefetchAssetGroup implements AssetGroup {
       private hashes: Map<string, string>,
       private db: Database,
       private prefix: string) {
+    this.name = config.name;
+    // Patterns in the config are regular expressions disguised as strings. Breathe life into them.
     this.patterns = this.config.patterns.map(pattern => new RegExp(pattern));
+    
+    // This is the primary cache, which holds all of the cached requests for this group. If a resource
+    // isn't in this cache, it hasn't been fetched yet.
     this.cache = this.scope.caches.open(`${this.prefix}:${this.config.name}:cache`);
   }
 

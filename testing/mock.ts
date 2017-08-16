@@ -87,6 +87,7 @@ export function tmpManifestSingleAssetGroup(fs: MockFileSystem): Manifest {
     assetGroups: [
       {
         name: 'group',
+        mode: 'prefetch',
         urls: files,
         patterns: [],
       }
