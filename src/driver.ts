@@ -130,12 +130,10 @@ export class Driver {
         table.read<LatestEntry>('latest'),
       ]);
     } catch (_) {
-      console.log('initialize(): generating fresh state');
       // Something went wrong. Try to start over by fetching a new manifest from the server and building
       // up an empty initial state.
       const manifest = await this.fetchLatestManifest();
       const hash = hashManifest(manifest);
-      console.log('got fresh manifest', hash);
       manifests = {};
       manifests[hash] = manifest;
       assignments = {};
@@ -181,6 +179,9 @@ export class Driver {
       }
       this.clientVersionMap.set(clientId, hash);
     });
+
+    // Set the latest version.
+    this.latestHash = latest.latest;
 
     // Finally, assert that the latest version is in fact loaded.
     if (!this.versions.has(latest.latest)) {

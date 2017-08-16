@@ -21,15 +21,12 @@ const scope = new SwTestHarnessBuilder()
   .withServerState(server)
   .build();
 
-fdescribe('Driver', () => {
+describe('Driver', () => {
   it('initializes correctly', async () => {
     const driver = new Driver(scope, scope, new CacheDatabase(scope, scope));
-    console.log('first request');
     expect(await makeRequest(scope, '/foo.txt')).toEqual('this is foo');
-    console.log('initialization');
     await driver.initialized;
     scope.updateServerState();
-    console.log('second request');
     expect(await makeRequest(scope, '/foo.txt')).toEqual('this is foo');
   });
 });
