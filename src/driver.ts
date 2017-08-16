@@ -18,7 +18,7 @@ export class Driver {
    * Tracks whether the SW is in an initialized state or not. Before initialization, it's not legal to
    * respond to requests.
    */
-  private initialized: Promise<void>|null = null;
+  initialized: Promise<void>|null = null;
   
   /**
    * Tracks whether the SW is in a safely initialized state. If this is `false`, requests will be allowed
@@ -66,28 +66,40 @@ export class Driver {
   }
 
   private async handleFetch(event: FetchEvent): Promise<Response> {
+    // Since the SW may have just been started, it may or may not have been initialized already.
+    // this.initialized will be `null` if initialization has not yet been attempted, or will be a
+    // Promise which will resolve (successfully or unsuccessfully) if it has.
     if (this.initialized === null) {
+      // Initialization has not yet been attempted, so attempt it. This should only ever happen once
+      // per SW instantiation.
       this.initialized = this.initialize();
     }
 
+    // If initialization fails, the SW needs to enter a safe state, where it declines to respond to
+    // network requests.
     try {
+      // Wait for initialization.
       await this.initialized;
     } catch (_) {
+      // Initialization failed. Enter a safe state.
       this.safeToServeTraffic = false;
-      return await this.scope.fetch(event.request);
+      // Since the SW is already committed to responding to the currently active request, 
+      return this.scope.fetch(event.request);
     }
 
     // Decide which version of the app to use to serve this request.
     const appVersion = this.assignVersion(event);
 
     // Handle the request. First try the AppVersion. If that doesn't work, fall back on the network.
-    let res = await appVersion.handleFetch(event.request, event);
+    const res = await appVersion.handleFetch(event.request, event);
     
     // The AppVersion will only return null if the manifest doesn't specify what to do about this
     // request. In that case, just fall back on the network.
     if (res === null) {
-      res = await this.scope.fetch(event.request);
+      return this.scope.fetch(event.request);
     }
+
+    // The AppVersion returned a usable response, so return it.
     return res;
   }
 
@@ -118,10 +130,12 @@ export class Driver {
         table.read<LatestEntry>('latest'),
       ]);
     } catch (_) {
+      console.log('initialize(): generating fresh state');
       // Something went wrong. Try to start over by fetching a new manifest from the server and building
       // up an empty initial state.
       const manifest = await this.fetchLatestManifest();
       const hash = hashManifest(manifest);
+      console.log('got fresh manifest', hash);
       manifests = {};
       manifests[hash] = manifest;
       assignments = {};
@@ -242,8 +256,8 @@ export class Driver {
    * Retrieve a copy of the latest manifest from the server.
    */
   private async fetchLatestManifest(): Promise<Manifest> {
-    const res = await this.scope.fetch('ngsw.json?ngsw-cache-bust=' + Math.random());
-    return await res.json();
+    const res = await this.scope.fetch('/ngsw.json?ngsw-cache-bust=' + Math.random());
+    return res.json();
   }
   
   /**

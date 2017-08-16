@@ -1,3 +1,5 @@
+import {sha1} from './sha1';
+
 export type ManifestHash = string;
 
 export interface Manifest {
@@ -20,5 +22,5 @@ export interface DataGroupConfig {
 }
 
 export function hashManifest(manifest: Manifest): ManifestHash {
-  return null!;
+  return sha1(JSON.stringify(manifest));
 }
