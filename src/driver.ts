@@ -12,6 +12,16 @@ interface LatestEntry {
   latest: string;
 }
 
+enum DriverSafety {
+  // The SW is operating in a normal mode, responding to all traffic.
+  NORMAL,
+
+  // The SW does not have a clean installation of the latest version of the app, but older cached versions
+  // are safe to use.
+  EXISTING_ONLY,
+  SAFE_MODE,
+}
+
 export class Driver {
 
   /**
@@ -166,7 +176,17 @@ export class Driver {
     // this might actually wait for the full initialization.
     const eachInit = Object
       .keys(manifests)
-      .map((hash: ManifestHash) => this.versions.get(hash)!.initializeFully());
+      .map(async (hash: ManifestHash) => {
+        try {
+          // Attempt to schedule or initialize this version. If this operation is successful, then
+          // initialization either succeeded or was scheduled. If it fails, then full initialization
+          // was attempted and failed.
+          await this.scheduleInitialization(this.versions.get(hash)!);
+          return true;
+        } catch (err) {
+          return false;
+        }
+      });
     await Promise.all(eachInit);
 
     // Map each client ID to its associated hash. Along the way, verify that the hash is still valid
@@ -266,12 +286,34 @@ export class Driver {
    * when the SW is not busy and has connectivity. This returns a Promise which must be
    * awaited, as under some conditions the AppVersion might be initialized immediately.
    */
-  private scheduleInitialization(appVersion: AppVersion): Promise<void> {
+  private async scheduleInitialization(appVersion: AppVersion): Promise<void> {
+    const initialize = async () => {
+      try {
+        await appVersion.initializeFully();
+      } catch (err) {
+        this.versionFailed(appVersion, err);
+      }
+    };
     // TODO: better logic for detecting localhost.
     if (this.scope.registration.scope.indexOf('://localhost') > -1) {
-      return appVersion.initializeFully();
+      return initialize();
     }
     // TODO: schedule this to happen asynchronously.
-    return appVersion.initializeFully();
+    return initialize();
+  }
+
+  private versionFailed(appVersion: AppVersion, err: Error): void {
+    // This particular AppVersion is broken. First, find the manifest hash.
+    const broken = Array.from(this.versions.entries()).find(([hash, version]) => version === appVersion);
+    if (broken === undefined) {
+      // This version is no longer in use anyway, so nobody cares.
+      return;
+    }
+    const brokenHash = broken[0];
+
+    // The action taken depends on whether the broken manifest is the active (latest) or not.
+    // If so, the SW cannot accept new clients, but can continue to service old ones.
+    if (this.latestHash === brokenHash) {
+    }
   }
 }

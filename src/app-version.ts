@@ -9,6 +9,15 @@ export class AppVersion {
   private assetGroupsByName = new Map<string, AssetGroup>();
   private assetGroups: AssetGroup[];
 
+  /**
+   * Tracks whether the manifest has encountered any inconsistencies.
+   */
+  private _okay = true;
+
+  get okay(): boolean {
+    return this._okay;
+  }
+
   constructor(private scope: ServiceWorkerGlobalScope, private adapter: Adapter, private database: Database, private manifest: Manifest, private manifestHash: string) {
     // The hashTable within the manifest is an Object - convert it to a Map for easier lookups.
     Object.keys(this.manifest.hashTable).forEach(url => {
@@ -37,17 +46,22 @@ export class AppVersion {
    * Fully initialize this version of the application. If this Promise resolves successfully, all required
    * data has been safely downloaded.
    */
-  initializeFully(): Promise<void> {
-    // Fully initialize each asset group, in series. Starts with an empty Promise, and waits for the previous
-    // groups to have been initialized before initializing the next one in turn.
-    return this.assetGroups.reduce<Promise<void>>(async (previous, group) => {
-      // Wait for the previous groups to complete initialization. If there is a failure, this will throw, and
-      // each subsequent group will throw, until the whole sequence fails.
-      await previous;
+  async initializeFully(): Promise<void> {
+    try {
+      // Fully initialize each asset group, in series. Starts with an empty Promise, and waits for the previous
+      // groups to have been initialized before initializing the next one in turn.
+      await this.assetGroups.reduce<Promise<void>>(async (previous, group) => {
+        // Wait for the previous groups to complete initialization. If there is a failure, this will throw, and
+        // each subsequent group will throw, until the whole sequence fails.
+        await previous;
 
-      // Initialize this group.
-      return group.initializeFully();
-    }, Promise.resolve());
+        // Initialize this group.
+        return group.initializeFully();
+      }, Promise.resolve());
+    } catch (err) {
+      this._okay = false;
+      throw err;
+    }
   }
 
   handleFetch(req: Request, context: Context): Promise<Response|null> {
