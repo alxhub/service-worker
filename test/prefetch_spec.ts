@@ -28,10 +28,10 @@ describe('prefetch assets', () => {
     group = new PrefetchAssetGroup(scope, scope, manifest.assetGroups![0], tmpHashTable(manifest), db, 'test');
   });
   it('initializes without crashing', async () => {
-    await group.fullyInitialize();
+    await group.initializeFully();
   });
   it('fully caches the two files', async () => {
-    await group.fullyInitialize();
+    await group.initializeFully();
     scope.updateServerState();
     const res1 = await group.handleFetch(scope.newRequest('/foo.txt'), scope);
     const res2 = await group.handleFetch(scope.newRequest('/bar.txt'), scope);
@@ -39,12 +39,12 @@ describe('prefetch assets', () => {
     expect(await res2!.text()).toEqual('this is bar');
   });
   it('persists the cache across restarts', async () => {
-    await group.fullyInitialize();
+    await group.initializeFully();
     const freshScope = new SwTestHarnessBuilder()
       .withCacheState(scope.caches.dehydrate())
       .build();
     group = new PrefetchAssetGroup(freshScope, freshScope, manifest.assetGroups![0], tmpHashTable(manifest), new CacheDatabase(freshScope, freshScope), 'test');
-    await group.fullyInitialize();
+    await group.initializeFully();
     const res1 = await group.handleFetch(scope.newRequest('/foo.txt'), scope);
     const res2 = await group.handleFetch(scope.newRequest('/bar.txt'), scope);
     expect(await res1!.text()).toEqual('this is foo');
@@ -56,7 +56,7 @@ describe('prefetch assets', () => {
     expect(await res1!.text()).toEqual('this is foo');
     expect(await res2!.text()).toEqual('this is bar');
     scope.updateServerState();
-    await group.fullyInitialize();
+    await group.initializeFully();
   });
   it('throws if the server-side content does not match the manifest hash', async () => {
     const badHashFs = dist
@@ -71,7 +71,7 @@ describe('prefetch assets', () => {
       .withServerState(badServer)
       .build();
     group = new PrefetchAssetGroup(badScope, badScope, manifest.assetGroups![0], tmpHashTable(manifest), new CacheDatabase(badScope, badScope), 'test');
-    const err = await errorFrom(group.fullyInitialize());
+    const err = await errorFrom(group.initializeFully());
     expect(err.message).toContain('Hash mismatch');
   });
 });

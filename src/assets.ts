@@ -3,15 +3,7 @@ import {Database} from './database';
 import {AssetGroupConfig} from './manifest';
 import {sha1} from './sha1';
 
-export interface AssetGroup {
-  readonly name: string;
-  fullyInitialize(): Promise<void>;
-
-  handleFetch(req: Request, ctx: Context): Promise<Response|null>;
-
-}
-
-export class PrefetchAssetGroup implements AssetGroup {
+export abstract class AssetGroup {
   /**
    * A deduplication cache, to make sure the SW never makes two network requests for the same
    * resource at once. Managed by `fetchAndCacheOnce`.
@@ -21,13 +13,13 @@ export class PrefetchAssetGroup implements AssetGroup {
   /**
    * Regular expression patterns.
    */
-  private patterns: RegExp[] = [];
+  protected patterns: RegExp[] = [];
 
   /**
    * A Promise which resolves to the `Cache` used to back this asset group. This is opened
    * from the constructor.
    */
-  private cache: Promise<Cache>;
+  protected cache: Promise<Cache>;
 
   /**
    * Group name from the configuration.
@@ -35,12 +27,12 @@ export class PrefetchAssetGroup implements AssetGroup {
   readonly name: string;
 
   constructor(
-      private scope: ServiceWorkerGlobalScope,
-      private adapter: Adapter,
-      private config: AssetGroupConfig,
-      private hashes: Map<string, string>,
-      private db: Database,
-      private prefix: string) {
+      protected scope: ServiceWorkerGlobalScope,
+      protected adapter: Adapter,
+      protected config: AssetGroupConfig,
+      protected hashes: Map<string, string>,
+      protected db: Database,
+      protected prefix: string) {
     this.name = config.name;
     // Patterns in the config are regular expressions disguised as strings. Breathe life into them.
     this.patterns = this.config.patterns.map(pattern => new RegExp(pattern));
@@ -50,34 +42,7 @@ export class PrefetchAssetGroup implements AssetGroup {
     this.cache = this.scope.caches.open(`${this.prefix}:${this.config.name}:cache`);
   }
 
-  async fullyInitialize(): Promise<void> {
-    // Open the cache which actually holds requests.
-    const cache = await this.cache;
-
-    // Build a list of Requests that need to be cached.
-    const reqs = this.config.urls.map(url => this.adapter.newRequest(url));
-
-    // Cache them serially. As this reduce proceeds, each Promise waits on the last
-    // before starting the fetch/cache operation for the next request. Any errors
-    // cause fall-through to the final Promise which rejects.
-    await reqs.reduce(async (previous: Promise<void>, req: Request) => {
-      // Wait on all previous operations to complete.
-      await previous;
-
-      // First, check the cache to see if there is already a copy of this resource.
-      const alreadyCached = (await cache.match(req)) !== undefined;
-      
-      // If the resource is in the cache already, it can be skipped.
-      if (alreadyCached) {
-        return;
-      }
-
-      // Otherwise, go to the network and hopefully cache the response (if successful).
-      await this.fetchAndCacheOnce(req);
-    }, Promise.resolve());
-    return null!;
-  }
-
+  abstract initializeFully(): Promise<void>;
 
   async handleFetch(req: Request, ctx: Context): Promise<Response|null> {
     // Either the request matches one of the known resource URLs, one of the patterns for
@@ -109,10 +74,53 @@ export class PrefetchAssetGroup implements AssetGroup {
     }
   }
 
+  protected async fetchAndCacheOnce(req: Request): Promise<Response> {
+    // The `inFlightRequests` map holds information about which caching operations are currently
+    // underway for known resources. If this request appears there, another "thread" is already
+    // in the process of caching it, and this work should not be duplicated.
+    if (this.inFlightRequests.has(req.url)) {
+      // There is a caching operation already in progress for this request. Wait for it to
+      // complete, and hopefully it will have yielded a useful response.
+      return this.inFlightRequests.get(req.url)!;
+    }
+
+    // No other caching operation is being attempted for this resource, so it will be owned here.
+    // Go to the network and get the correct version.
+    const fetchOp = this.fetchFromNetwork(req);
+
+    // Save this operation in `inFlightRequests` so any other "thread" attempting to cache it
+    // will block on this chain instead of duplicating effort.
+    this.inFlightRequests.set(req.url, fetchOp);
+
+    // Make sure this attempt is cleaned up properly on failure.
+    try {
+      // Wait for a response. If this fails, the request will remain in `inFlightRequests`
+      // indefinitely.
+      const res = await fetchOp;
+
+      // It's very important that only successful responses are cached. Unsuccessful responses
+      // should never be cached as this can completely break applications.
+      if (!res.ok) {
+        throw new Error(`Response not Ok (fetchAndCacheOnce): request for ${req.url} returned response ${res.status} ${res.statusText}`);
+      }
+
+      // This response is safe to cache (as long as it's cloned). Wait until the cache operation
+      // is complete.
+      const cache = await this.scope.caches.open(`${this.prefix}:${this.config.name}:cache`);
+      await cache.put(req, res.clone());
+
+      return res;
+    } finally {
+      // Finally, it can be removed from `inFlightRequests`. This might result in a double-remove
+      // if some other  chain was already making this request too, but that won't hurt anything.
+      this.inFlightRequests.delete(req.url);
+    }
+  }
+
   /**
    * Load a particular asset from the network, accounting for hash validation.
    */
-  private async fetchFromNetwork(req: Request): Promise<Response> {
+  protected async fetchFromNetwork(req: Request): Promise<Response> {
     // If a hash is available for this resource, then compare the fetched version with the
     // canonical hash. Otherwise, the network version will have to be trusted.
     if (this.hashes.has(req.url)) {
@@ -183,47 +191,40 @@ export class PrefetchAssetGroup implements AssetGroup {
       return this.scope.fetch(req);
     }
   }
+}
 
-  private async fetchAndCacheOnce(req: Request): Promise<Response> {
-    // The `inFlightRequests` map holds information about which caching operations are currently
-    // underway for known resources. If this request appears there, another "thread" is already
-    // in the process of caching it, and this work should not be duplicated.
-    if (this.inFlightRequests.has(req.url)) {
-      // There is a caching operation already in progress for this request. Wait for it to
-      // complete, and hopefully it will have yielded a useful response.
-      return this.inFlightRequests.get(req.url)!;
-    }
+export class PrefetchAssetGroup extends AssetGroup {
 
-    // No other caching operation is being attempted for this resource, so it will be owned here.
-    // Go to the network and get the correct version.
-    const fetchOp = this.fetchFromNetwork(req);
+  async initializeFully(): Promise<void> {
+    // Open the cache which actually holds requests.
+    const cache = await this.cache;
 
-    // Save this operation in `inFlightRequests` so any other "thread" attempting to cache it
-    // will block on this chain instead of duplicating effort.
-    this.inFlightRequests.set(req.url, fetchOp);
+    // Build a list of Requests that need to be cached.
+    const reqs = this.config.urls.map(url => this.adapter.newRequest(url));
 
-    // Make sure this attempt is cleaned up properly on failure.
-    try {
-      // Wait for a response. If this fails, the request will remain in `inFlightRequests`
-      // indefinitely.
-      const res = await fetchOp;
+    // Cache them serially. As this reduce proceeds, each Promise waits on the last
+    // before starting the fetch/cache operation for the next request. Any errors
+    // cause fall-through to the final Promise which rejects.
+    await reqs.reduce(async (previous: Promise<void>, req: Request) => {
+      // Wait on all previous operations to complete.
+      await previous;
 
-      // It's very important that only successful responses are cached. Unsuccessful responses
-      // should never be cached as this can completely break applications.
-      if (!res.ok) {
-        throw new Error(`Response not Ok (fetchAndCacheOnce): request for ${req.url} returned response ${res.status} ${res.statusText}`);
+      // First, check the cache to see if there is already a copy of this resource.
+      const alreadyCached = (await cache.match(req)) !== undefined;
+      
+      // If the resource is in the cache already, it can be skipped.
+      if (alreadyCached) {
+        return;
       }
 
-      // This response is safe to cache (as long as it's cloned). Wait until the cache operation
-      // is complete.
-      const cache = await this.scope.caches.open(`${this.prefix}:${this.config.name}:cache`);
-      await cache.put(req, res.clone());
-
-      return res;
-    } finally {
-      // Finally, it can be removed from `inFlightRequests`. This might result in a double-remove
-      // if some other  chain was already making this request too, but that won't hurt anything.
-      this.inFlightRequests.delete(req.url);
-    }
+      // Otherwise, go to the network and hopefully cache the response (if successful).
+      await this.fetchAndCacheOnce(req);
+    }, Promise.resolve());
+    return null!;
   }
+}
+
+export class LazyAssetGroup extends AssetGroup {
+
+  async initializeFully(): Promise<void> {}
 }

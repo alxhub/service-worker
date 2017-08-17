@@ -2,7 +2,7 @@ import {Adapter, Context} from './adapter';
 import {Database} from './database';
 import {Manifest} from './manifest';
 
-import {AssetGroup, PrefetchAssetGroup} from './assets';
+import {AssetGroup, LazyAssetGroup, PrefetchAssetGroup} from './assets';
 
 export class AppVersion {
   private hashTable = new Map<string, string>();
@@ -25,8 +25,7 @@ export class AppVersion {
         case 'prefetch':
           return new PrefetchAssetGroup(this.scope, this.adapter, config, this.hashTable, this.database, prefix);
         case 'lazy':
-          // TODO implement the lazy mode.
-          return null!;
+          return new LazyAssetGroup(this.scope, this.adapter, config, this.hashTable, this.database, prefix);
       }
     });
 
@@ -47,7 +46,7 @@ export class AppVersion {
       await previous;
 
       // Initialize this group.
-      return group.fullyInitialize();
+      return group.initializeFully();
     }, Promise.resolve());
   }
 

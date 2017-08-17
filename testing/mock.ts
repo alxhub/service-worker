@@ -65,14 +65,52 @@ export class MockServerStateBuilder {
 }
 
 export class MockServerState {
+  private requests: Request[] = [];
+
   constructor(private resources: Map<string, Response>) {}
 
   async fetch(req: Request): Promise<Response> {
     const url = req.url.split('?')[0];
+    this.requests.push(req);
     if (this.resources.has(url)) {
       return this.resources.get(url)!;
     }
     return new MockResponse(null, {status: 404, statusText: 'Not Found'});
+  }
+
+  assertSawRequestFor(url: string): void {
+    if (!this.sawRequestFor(url)) {
+      throw new Error(`Expected request for ${url}, got none.`);
+    }
+  }
+
+  assertNoRequestFor(url: string): void {
+    if (this.sawRequestFor(url)) {
+      throw new Error(`Expected no request for ${url} but saw one.`);
+    }
+  }
+
+  sawRequestFor(url: string): boolean {
+    const matching = this.requests.filter(req => req.url.split('?')[0] === url);
+    if (matching.length > 0) {
+      this.requests = this.requests.filter(req => req !== matching[0]);
+      return true;
+    }
+    return false;
+  }
+
+  assertNoOtherRequests(): void {
+    if (!this.noOtherRequests()) {
+      throw new Error(`Expected no other requests, got requests for ${this.requests.map(req => req.url.split('?')[0]).join(', ')}`);
+    }
+  }
+
+  noOtherRequests(): boolean {
+    return this.requests.length === 0;
+  }
+
+  clearRequests(): void {
+    this.requests = [];
   }
 }
 
@@ -94,6 +132,14 @@ export function tmpManifestSingleAssetGroup(fs: MockFileSystem): Manifest {
     ],
     hashTable,
   };
+}
+
+export function tmpHashTableForFs(fs: MockFileSystem): {[url: string]: string} {
+  const table: {[url: string]: string} = {};
+  fs.list().forEach(path => {
+    table[path] = fs.lookup(path)!.hash;
+  });
+  return table;
 }
 
 export function tmpHashTable(manifest: Manifest): Map<string, string> {
