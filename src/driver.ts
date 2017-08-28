@@ -372,16 +372,35 @@ export class Driver implements UpdateSource {
       updateFrom = this.versions.get(this.latestHash);
     }
 
-    
+    // Cause the new version to become fully initialized. If this fails, then the version will
+    // not be available for use.
     await newVersion.initializeFully(this);
 
+    // Install this as an active version of the app.
     this.versions.set(hash, newVersion);
+    await this.sync();
 
+    // Future new clients will use this hash as the latest version.
     this.latestHash = hash;
+
+    // TODO: notify applications about the newly active update.
   }
 
-  private async checkForUpdate(): Promise<void> {
-    return;
+  private async checkForUpdate(): Promise<boolean> {
+    const manifest = await this.fetchLatestManifest();
+    const hash = hashManifest(manifest);
+
+    // Check whether this is really an update.
+    if (this.versions.has(hash)) {
+      return false;
+    }
+
+    await this.setupUpdate(manifest, hash);
+    return true;
+  }
+
+  sync(): void {
+
   }
 
   /**
