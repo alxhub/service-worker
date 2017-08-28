@@ -1,4 +1,5 @@
 import {Adapter, Context} from './adapter';
+import {UpdateSource} from './api';
 import {Database} from './database';
 import {AssetGroupConfig} from './manifest';
 import {sha1} from './sha1';
@@ -42,7 +43,7 @@ export abstract class AssetGroup {
     this.cache = this.scope.caches.open(`${this.prefix}:${this.config.name}:cache`);
   }
 
-  abstract initializeFully(): Promise<void>;
+  abstract initializeFully(updateFrom?: UpdateSource): Promise<void>;
 
   async handleFetch(req: Request, ctx: Context): Promise<Response|null> {
     // Either the request matches one of the known resource URLs, one of the patterns for
@@ -191,29 +192,56 @@ export abstract class AssetGroup {
       return this.scope.fetch(req);
     }
   }
+
+  protected async maybeUpdate(updateFrom: UpdateSource, req: Request, cache: Cache): Promise<boolean> {
+    // Check if this resource is hashed and already exists in the cache of a prior version.
+    if (this.hashes.has(req.url)) {
+      const hash = this.hashes.get(req.url)!;
+
+      // Check the caches of prior versions, using the hash to ensure the correct version of
+      // the resource is loaded.
+      const res = await updateFrom.lookupResourceWithHash(req.url, hash);
+
+      // If a previously cached version was available, copy it over to this cache.
+      if (res !== null) {
+        // Copy to this cache.
+        await cache.put(this.adapter.newRequest(req), res);
+
+        // No need to do anything further with this resource, it's now cached properly.
+        return true;
+      }
+    }
+
+    // No up-to-date version of this resource could be found.
+    return false;
+  }
 }
 
 export class PrefetchAssetGroup extends AssetGroup {
-
-  async initializeFully(): Promise<void> {
+  async initializeFully(updateFrom?: UpdateSource): Promise<void> {
     // Open the cache which actually holds requests.
     const cache = await this.cache;
 
-    // Build a list of Requests that need to be cached.
-    const reqs = this.config.urls.map(url => this.adapter.newRequest(url));
-
-    // Cache them serially. As this reduce proceeds, each Promise waits on the last
-    // before starting the fetch/cache operation for the next request. Any errors
-    // cause fall-through to the final Promise which rejects.
-    await reqs.reduce(async (previous: Promise<void>, req: Request) => {
+    // Cache all resources serially. As this reduce proceeds, each Promise waits on
+    // the last before starting the fetch/cache operation for the next request. Any
+    // errors cause fall-through to the final Promise which rejects.
+    await this.config.urls.reduce(async (previous: Promise<void>, url: string) => {
       // Wait on all previous operations to complete.
       await previous;
+      
+      // Construct the Request for this url.
+      const req = this.adapter.newRequest(url);
 
       // First, check the cache to see if there is already a copy of this resource.
       const alreadyCached = (await cache.match(req)) !== undefined;
       
       // If the resource is in the cache already, it can be skipped.
       if (alreadyCached) {
+        return;
+      }
+
+      // If an update source is available.
+      if (updateFrom !== undefined && await this.maybeUpdate(updateFrom, req, cache)) {
         return;
       }
 
@@ -225,6 +253,35 @@ export class PrefetchAssetGroup extends AssetGroup {
 }
 
 export class LazyAssetGroup extends AssetGroup {
+  async initializeFully(updateFrom?: UpdateSource): Promise<void> {
+    // No action necessary if no update source is available - resources managed in this group
+    // are all lazily loaded, so there's nothing to initialize.
+    if (updateFrom === undefined) {
+      return;
+    }
 
-  async initializeFully(): Promise<void> {}
+    // Open the cache which actually holds requests.
+    const cache = await this.cache;
+
+    // Loop through the listed resources, caching any which are available.
+    await this.config.urls.reduce(async (previous: Promise<void>, url: string) => {
+      // Wait on all previous operations to complete.
+      await previous;
+      
+      // Construct the Request for this url.
+      const req = this.adapter.newRequest(url);
+
+      // First, check the cache to see if there is already a copy of this resource.
+      const alreadyCached = (await cache.match(req)) !== undefined;
+      
+      // If the resource is in the cache already, it can be skipped.
+      if (alreadyCached) {
+        return;
+      }
+      
+      // The return value of `maybeUpdate` is unimportant - whether it cached successfully
+      // or not, no action is taken.
+      await this.maybeUpdate(updateFrom, req, cache);
+    }, Promise.resolve())
+  }
 }

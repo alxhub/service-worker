@@ -1,10 +1,11 @@
 import {Adapter, Context} from './adapter';
+import {UpdateSource} from './api';
 import {Database} from './database';
 import {Manifest} from './manifest';
 
 import {AssetGroup, LazyAssetGroup, PrefetchAssetGroup} from './assets';
 
-export class AppVersion {
+export class AppVersion implements UpdateSource {
   private hashTable = new Map<string, string>();
   private assetGroupsByName = new Map<string, AssetGroup>();
   private assetGroups: AssetGroup[];
@@ -46,7 +47,7 @@ export class AppVersion {
    * Fully initialize this version of the application. If this Promise resolves successfully, all required
    * data has been safely downloaded.
    */
-  async initializeFully(): Promise<void> {
+  async initializeFully(updateFrom?: UpdateSource): Promise<void> {
     try {
       // Fully initialize each asset group, in series. Starts with an empty Promise, and waits for the previous
       // groups to have been initialized before initializing the next one in turn.
@@ -56,7 +57,7 @@ export class AppVersion {
         await previous;
 
         // Initialize this group.
-        return group.initializeFully();
+        return group.initializeFully(updateFrom);
       }, Promise.resolve());
     } catch (err) {
       this._okay = false;
@@ -79,5 +80,23 @@ export class AppVersion {
       // No response has been found yet. Maybe this group will have one.
       return group.handleFetch(req, context);
     }, Promise.resolve(null));
+  }
+
+  async lookupResourceWithHash(url: string, hash: string): Promise<Response|null> {
+    const req = this.adapter.newRequest(url);
+
+    // Verify that this version has the requested resource cached. If not, there's no point in trying.
+    if (!this.hashTable.has(url)) {
+      return null;
+    }
+
+    // Next, check whether the resource has the correct hash. If not, any cached response isn't usable.
+    if (this.hashTable.get(url)! !== hash) {
+      return null;
+    }
+
+    // TODO: no-op context and appropriate contract. Currently this is a violation of the typings and could
+    // cause issues if handleFetch() has side effects. A better strategy to deal with side effects is needed.
+    return this.handleFetch(req, null!);
   }
 }

@@ -29,7 +29,9 @@ export class SwTestHarnessBuilder {
 export class SwTestHarness implements ServiceWorkerGlobalScope, Adapter, Context {
   readonly clients: Clients = null!;
   private eventHandlers = new Map<string, Function>();
-  readonly registration: ServiceWorkerRegistration = null!;
+  readonly registration: ServiceWorkerRegistration = {
+    scope: 'http://localhost/',
+  } as any;
 
   constructor(private server: MockServerState, readonly caches: MockCacheStorage) {}
 

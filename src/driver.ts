@@ -1,4 +1,5 @@
 import {Adapter, Context} from './adapter';
+import {UpdateSource} from './api';
 import {AppVersion} from './app-version';
 import {Database, Table} from './database';
 import {Manifest, ManifestHash, hashManifest} from './manifest';
@@ -12,7 +13,7 @@ interface LatestEntry {
   latest: string;
 }
 
-enum DriverSafetyState {
+enum DriverReadyState {
   // The SW is operating in a normal mode, responding to all traffic.
   NORMAL,
 
@@ -25,12 +26,12 @@ enum DriverSafetyState {
   SAFE_MODE,
 }
 
-export class Driver {
+export class Driver implements UpdateSource {
   /**
-   * Tracks the current safety condition under which the SW is operating. This controls whether the SW
+   * Tracks the current readiness condition under which the SW is operating. This controls whether the SW
    * attempts to respond to some or all requests.
    */
-  state: DriverSafetyState = DriverSafetyState.NORMAL;
+  state: DriverReadyState = DriverReadyState.NORMAL;
 
   /**
    * Tracks whether the SW is in an initialized state or not. Before initialization, it's not legal to
@@ -67,13 +68,13 @@ export class Driver {
     // If the SW is in a broken state where it's not safe to handle requests at all, returning causes
     // the request to fall back on the network. This is preferred over `respondWith(fetch(req))` because
     // the latter still shows in DevTools that the request was handled by the SW.
-    if (this.state === DriverSafetyState.SAFE_MODE) {
+    // TODO: try to handle DriverReadyState.EXISTING_CLIENTS_ONLY here.
+    if (this.state === DriverReadyState.SAFE_MODE) {
       return;
     }
 
     // Past this point, the SW commits to handling the request itself. This could still fail (and result
-    // in `safeToServeTraffic` being set to `false`), but even in that case the SW will still deliver a
-    // response.
+    // in `state` being set to `SAFE_MODE`), but even in that case the SW will still deliver a response.
     event.respondWith(this.handleFetch(event));
   }
 
@@ -94,7 +95,7 @@ export class Driver {
       await this.initialized;
     } catch (_) {
       // Initialization failed. Enter a safe state.
-      this.state = DriverSafetyState.SAFE_MODE;
+      this.state = DriverReadyState.SAFE_MODE;
       // Since the SW is already committed to responding to the currently active request, 
       return this.scope.fetch(event.request);
     }
@@ -240,8 +241,8 @@ export class Driver {
         return this.lookupVersionByHash(hash, 'assignVersion');
       } else {
         // This is the first time this client ID has been seen. Whether the SW is in a state
-        // to handle new clients depends on the current safety state, so check that first.
-        if (this.state !== DriverSafetyState.NORMAL) {
+        // to handle new clients depends on the current readiness state, so check that first.
+        if (this.state !== DriverReadyState.NORMAL) {
           // It's not safe to serve new clients in the current state. It's possible that this
           // is an existing client which has not been mapped yet (see below) but even if that
           // is the case, it's invalid to make an assignment to a known invalid version, even
@@ -278,7 +279,7 @@ export class Driver {
     } else {
       // No client ID was associated with the request. This must be a navigation request
       // for a new client. First check that the SW is accepting new clients.
-      if (this.state !== DriverSafetyState.NORMAL) {
+      if (this.state !== DriverReadyState.NORMAL) {
         return null;
       }
       
@@ -341,7 +342,7 @@ export class Driver {
       // The latest manifest is broken. This means that new clients are at the mercy of the
       // network, but caches continue to be valid for previous versions. This is unfortunate
       // but unavoidable.
-      this.state =  DriverSafetyState.EXISTING_CLIENTS_ONLY;
+      this.state =  DriverReadyState.EXISTING_CLIENTS_ONLY;
       
       // Cancel the binding for these clients.
       Array
@@ -357,5 +358,55 @@ export class Driver {
       // Push the affected clients onto the latest version.
       affectedClients.forEach(clientId => this.clientVersionMap.set(clientId, this.latestHash!));
     }
+  }
+
+  private async setupUpdate(manifest: Manifest, hash: string): Promise<void> {
+    const newVersion = new AppVersion(this.scope, this.adapter, this.db, manifest, hash);
+
+    // Try to determine a version that's safe to update from.
+    let updateFrom: AppVersion|undefined = undefined;
+
+    // It's always safe to update from a version, even a broken one, as it will still only have
+    // valid resources cached. If there is no latest version, though, this update will have to 
+    if (this.latestHash !== null) {
+      updateFrom = this.versions.get(this.latestHash);
+    }
+
+    
+    await newVersion.initializeFully(this);
+
+    this.versions.set(hash, newVersion);
+
+    this.latestHash = hash;
+  }
+
+  private async checkForUpdate(): Promise<void> {
+    return;
+  }
+
+  /**
+   * Determine if a specific version of the given resource is cached anywhere within the SW,
+   * and fetch it if so.
+   */
+  lookupResourceWithHash(url: string, hash: string): Promise<Response|null> {
+    return Array
+      // Scan through the set of all cached versions, valid or otherwise. It's safe to do such
+      // lookups even for invalid versions as the cached version of a resource will have the
+      // same hash regardless.
+      .from(this.versions.values())
+      // Reduce the set of versions to a single potential result. At any point along the
+      // reduction, if a response has already been identified, then pass it through, as no
+      // future operation could change the response. If no response has been found yet, keep
+      // checking versions until one is or until all versions have been exhausted.
+      .reduce(async (prev, version) => {
+        // First, check the previous result. If a non-null result has been found already, just
+        // return it.
+        if (await prev !== null) {
+          return prev;
+        }
+
+        // No result has been found yet. Try the next `AppVersion`.
+        return version.lookupResourceWithHash(url, hash);
+      }, Promise.resolve<Response|null>(null))
   }
 }
