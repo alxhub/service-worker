@@ -12,29 +12,31 @@ interface LatestEntry {
   latest: string;
 }
 
-enum DriverSafety {
+enum DriverSafetyState {
   // The SW is operating in a normal mode, responding to all traffic.
   NORMAL,
 
   // The SW does not have a clean installation of the latest version of the app, but older cached versions
-  // are safe to use.
-  EXISTING_ONLY,
+  // are safe to use so long as they don't try to fetch new dependencies. This is a degraded state.
+  EXISTING_CLIENTS_ONLY,
+
+  // The SW has decided that caching is completely unreliable, and is forgoing request handling until the
+  // next restart.
   SAFE_MODE,
 }
 
 export class Driver {
+  /**
+   * Tracks the current safety condition under which the SW is operating. This controls whether the SW
+   * attempts to respond to some or all requests.
+   */
+  state: DriverSafetyState = DriverSafetyState.NORMAL;
 
   /**
    * Tracks whether the SW is in an initialized state or not. Before initialization, it's not legal to
    * respond to requests.
    */
   initialized: Promise<void>|null = null;
-  
-  /**
-   * Tracks whether the SW is in a safely initialized state. If this is `false`, requests will be allowed
-   * to fall through to the network.
-   */
-  private safeToServeTraffic: boolean = true;
 
   /**
    * Maps client IDs to the manifest hash of the application version being used to serve them. If a client
@@ -65,7 +67,7 @@ export class Driver {
     // If the SW is in a broken state where it's not safe to handle requests at all, returning causes
     // the request to fall back on the network. This is preferred over `respondWith(fetch(req))` because
     // the latter still shows in DevTools that the request was handled by the SW.
-    if (!this.safeToServeTraffic) {
+    if (this.state === DriverSafetyState.SAFE_MODE) {
       return;
     }
 
@@ -92,13 +94,18 @@ export class Driver {
       await this.initialized;
     } catch (_) {
       // Initialization failed. Enter a safe state.
-      this.safeToServeTraffic = false;
+      this.state = DriverSafetyState.SAFE_MODE;
       // Since the SW is already committed to responding to the currently active request, 
       return this.scope.fetch(event.request);
     }
 
     // Decide which version of the app to use to serve this request.
     const appVersion = this.assignVersion(event);
+
+    // Bail out
+    if (appVersion === null) {
+      return this.scope.fetch(event.request);
+    }
 
     // Handle the request. First try the AppVersion. If that doesn't work, fall back on the network.
     const res = await appVersion.handleFetch(event.request, event);
@@ -220,8 +227,7 @@ export class Driver {
   /**
    * Decide which version of the manifest to use for the event.
    */
-  // TODO: make this not a Promise.
-  private assignVersion(event: FetchEvent): AppVersion {
+  private assignVersion(event: FetchEvent): AppVersion|null {
     // First, check whether the event has a client ID. If it does, the version may already be associated.
     const clientId = event.clientId;
     if (clientId !== null) {
@@ -233,7 +239,18 @@ export class Driver {
         // TODO: make sure the version is valid.
         return this.lookupVersionByHash(hash, 'assignVersion');
       } else {
-        // This is the first time this client ID has been seen. Two cases apply. Either:
+        // This is the first time this client ID has been seen. Whether the SW is in a state
+        // to handle new clients depends on the current safety state, so check that first.
+        if (this.state !== DriverSafetyState.NORMAL) {
+          // It's not safe to serve new clients in the current state. It's possible that this
+          // is an existing client which has not been mapped yet (see below) but even if that
+          // is the case, it's invalid to make an assignment to a known invalid version, even
+          // if that assignment was previously implicit. Return undefined here to let the
+          // caller know that no assignment is possible at this time.
+          return null;
+        }
+        
+        // It's safe to handle this request. Two cases apply. Either:
         // 1) the browser assigned a client ID at the time of the navigation request, and
         //    this is truly the first time seeing this client, or
         // 2) a navigation request came previously from the same client, but with no client
@@ -248,7 +265,7 @@ export class Driver {
 
         // First validate the current state.
         if (this.latestHash === null) {
-          throw new Error(`Invariant violated (assignVersion): latestHash was null`)
+          throw new Error(`Invariant violated (assignVersion): latestHash was null`);
         }
 
         // Pin this client ID to the current latest version, indefinitely.
@@ -260,8 +277,13 @@ export class Driver {
       }
     } else {
       // No client ID was associated with the request. This must be a navigation request
-      // for a new client. Serve it with the latest version, and assume that the client
-      // will actually get associated with that version on the next request.
+      // for a new client. First check that the SW is accepting new clients.
+      if (this.state !== DriverSafetyState.NORMAL) {
+        return null;
+      }
+      
+      // Serve it with the latest version, and assume that the client will actually get
+      // associated with that version on the next request.
 
       // First validate the current state.
       if (this.latestHash === null) {
@@ -311,9 +333,29 @@ export class Driver {
     }
     const brokenHash = broken[0];
 
+    // TODO: notify affected apps.
+
     // The action taken depends on whether the broken manifest is the active (latest) or not.
     // If so, the SW cannot accept new clients, but can continue to service old ones.
     if (this.latestHash === brokenHash) {
+      // The latest manifest is broken. This means that new clients are at the mercy of the
+      // network, but caches continue to be valid for previous versions. This is unfortunate
+      // but unavoidable.
+      this.state =  DriverSafetyState.EXISTING_CLIENTS_ONLY;
+      
+      // Cancel the binding for these clients.
+      Array
+        .from(this.clientVersionMap.keys())
+        .forEach(clientId => this.clientVersionMap.delete(clientId));
+    } else {
+      // The current version is viable, but this older version isn't. The only possible remedy
+      // is to stop serving the older version and go to the network. Figure out which clients
+      // are affected and put them on the latest.
+      const affectedClients = Array
+        .from(this.clientVersionMap.keys())
+        .filter(clientId => this.clientVersionMap.get(clientId)! === brokenHash);
+      // Push the affected clients onto the latest version.
+      affectedClients.forEach(clientId => this.clientVersionMap.set(clientId, this.latestHash!));
     }
   }
 }
