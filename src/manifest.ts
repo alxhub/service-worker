@@ -19,6 +19,7 @@ export interface AssetGroupConfig {
 
 export interface DataGroupConfig {
   name: string;
+  patterns: string[];
 }
 
 export function hashManifest(manifest: Manifest): ManifestHash {
