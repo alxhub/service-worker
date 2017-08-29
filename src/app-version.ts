@@ -19,7 +19,7 @@ export class AppVersion implements UpdateSource {
     return this._okay;
   }
 
-  constructor(private scope: ServiceWorkerGlobalScope, private adapter: Adapter, private database: Database, private manifest: Manifest, private manifestHash: string) {
+  constructor(private scope: ServiceWorkerGlobalScope, private adapter: Adapter, private database: Database, readonly manifest: Manifest, private manifestHash: string) {
     // The hashTable within the manifest is an Object - convert it to a Map for easier lookups.
     Object.keys(this.manifest.hashTable).forEach(url => {
       this.hashTable.set(url, this.manifest.hashTable[url]);
@@ -55,7 +55,7 @@ export class AppVersion implements UpdateSource {
         // Wait for the previous groups to complete initialization. If there is a failure, this will throw, and
         // each subsequent group will throw, until the whole sequence fails.
         await previous;
-
+        
         // Initialize this group.
         return group.initializeFully(updateFrom);
       }, Promise.resolve());

@@ -205,7 +205,7 @@ export abstract class AssetGroup {
       // If a previously cached version was available, copy it over to this cache.
       if (res !== null) {
         // Copy to this cache.
-        await cache.put(this.adapter.newRequest(req), res);
+        await cache.put(req, res);
 
         // No need to do anything further with this resource, it's now cached properly.
         return true;
@@ -228,13 +228,13 @@ export class PrefetchAssetGroup extends AssetGroup {
     await this.config.urls.reduce(async (previous: Promise<void>, url: string) => {
       // Wait on all previous operations to complete.
       await previous;
-      
+
       // Construct the Request for this url.
       const req = this.adapter.newRequest(url);
 
       // First, check the cache to see if there is already a copy of this resource.
       const alreadyCached = (await cache.match(req)) !== undefined;
-      
+
       // If the resource is in the cache already, it can be skipped.
       if (alreadyCached) {
         return;

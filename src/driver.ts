@@ -100,8 +100,9 @@ export class Driver implements UpdateSource {
       return this.scope.fetch(event.request);
     }
 
-    // Decide which version of the app to use to serve this request.
-    const appVersion = this.assignVersion(event);
+    // Decide which version of the app to use to serve this request. This is asynchronous as in
+    // some cases, a record will need to be written to disk about the assignment that is made.
+    const appVersion = await this.assignVersion(event);
 
     // Bail out
     if (appVersion === null) {
@@ -228,7 +229,7 @@ export class Driver implements UpdateSource {
   /**
    * Decide which version of the manifest to use for the event.
    */
-  private assignVersion(event: FetchEvent): AppVersion|null {
+  private async assignVersion(event: FetchEvent): Promise<AppVersion|null> {
     // First, check whether the event has a client ID. If it does, the version may already be associated.
     const clientId = event.clientId;
     if (clientId !== null) {
@@ -271,7 +272,7 @@ export class Driver implements UpdateSource {
 
         // Pin this client ID to the current latest version, indefinitely.
         this.clientVersionMap.set(clientId, this.latestHash);
-        // TODO: sync to DB.
+        await this.sync();
 
         // Return the latest `AppVersion`.
         return this.lookupVersionByHash(this.latestHash, 'assignVersion');
@@ -378,15 +379,15 @@ export class Driver implements UpdateSource {
 
     // Install this as an active version of the app.
     this.versions.set(hash, newVersion);
-    await this.sync();
-
     // Future new clients will use this hash as the latest version.
     this.latestHash = hash;
+
+    await this.sync();
 
     // TODO: notify applications about the newly active update.
   }
 
-  private async checkForUpdate(): Promise<boolean> {
+  async checkForUpdate(): Promise<boolean> {
     const manifest = await this.fetchLatestManifest();
     const hash = hashManifest(manifest);
 
@@ -399,8 +400,37 @@ export class Driver implements UpdateSource {
     return true;
   }
 
-  sync(): void {
+  /**
+   * Synchronize the existing state to the underlying database.
+   */
+  private async sync(): Promise<void> {
+    // Open up the DB table.
+    const table = await this.db.open('control');
 
+    // Construct a serializable map of hashes to manifests.
+    const manifests: ManifestMap = {};
+    this.versions.forEach((version, hash) => {
+      manifests[hash] = version.manifest;
+    });
+
+    // Construct a serializable map of client ids to version hashes.
+    const assignments: ClientAssignments = {};
+    this.clientVersionMap.forEach((hash, clientId) => {
+      assignments[clientId] = hash;
+    });
+
+    // Record the latest entry. Since this is a sync which is necessarily happening after
+    // initialization, latestHash should always be valid.
+    const latest: LatestEntry = {
+      latest: this.latestHash!,
+    };
+    
+    // Synchronize all of these.
+    await Promise.all([
+      table.write('manifests', manifests),
+      table.write('assignments', assignments),
+      table.write('latest', latest),
+    ]);
   }
 
   /**
