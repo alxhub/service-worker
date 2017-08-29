@@ -70,7 +70,7 @@ export class CacheTable implements Table {
   write(key: string, value: Object): Promise<void> {
     return this
       .cache
-      .put(this.request(key), this.adapter.newResponse(value));
+      .put(this.request(key), this.adapter.newResponse(JSON.stringify(value)));
   }
 
 }

@@ -146,6 +146,27 @@ describe('Driver', () => {
     expect(await makeRequest(scope, '/bar.txt')).toEqual('this is bar');
     serverUpdate.assertNoOtherRequests();
   });
+
+  it('preserves multiple client assignments across restarts', async () => {
+    expect(await makeRequest(scope, '/foo.txt')).toEqual('this is foo');
+    await driver.initialized;
+
+    scope.updateServerState(serverUpdate);
+    expect(await driver.checkForUpdate()).toEqual(true);
+    expect(await makeRequest(scope, '/foo.txt', 'new')).toEqual('this is foo v2');
+    serverUpdate.clearRequests();
+
+    scope = new SwTestHarnessBuilder()
+      .withServerState(serverUpdate)
+      .withCacheState(scope.caches.dehydrate())
+      .build();
+    driver = new Driver(scope, scope, new CacheDatabase(scope, scope));
+
+    expect(await makeRequest(scope, '/foo.txt')).toEqual('this is foo');
+    await driver.initialized;
+    expect(await makeRequest(scope, '/foo.txt', 'new')).toEqual('this is foo v2');
+    serverUpdate.assertNoOtherRequests();
+  });
 });
 
 async function makeRequest(scope: SwTestHarness, url: string, clientId?: string): Promise<string|null> {
