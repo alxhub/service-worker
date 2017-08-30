@@ -137,7 +137,7 @@ export abstract class AssetGroup {
       // *only* check the browser cache for a cached version of the resource, when cacheMode is
       // fully supported. For now, the resource is fetched directly, without cache-busting, and
       // if the hash test fails a cache-busted request is tried before concluding that the
-      //  resource isn't correct. This gives the benefit of acceleration via the HTTP cache
+      // resource isn't correct. This gives the benefit of acceleration via the HTTP cache
       // without the risk of stale data, at the expense of a duplicate request in the event of
       // a stale response.
 

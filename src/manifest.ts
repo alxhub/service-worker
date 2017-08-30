@@ -20,6 +20,7 @@ export interface AssetGroupConfig {
 export interface DataGroupConfig {
   name: string;
   patterns: string[];
+  maxSize: number;
 }
 
 export function hashManifest(manifest: Manifest): ManifestHash {
