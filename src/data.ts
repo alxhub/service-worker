@@ -281,6 +281,14 @@ export class DataGroup {
             return;
           }
 
+          if (lru.size >= this.config.maxSize) {
+            // The cache is too big, evict something.
+            const evictedUrl = lru.pop();
+            if (evictedUrl !== null) {
+              await this.clearCacheForUrl(evictedUrl);
+            }
+          }
+
           // TODO: evaluate for possible race conditions during flaky network periods.
 
           // Mark this resource as having been accessed recently. This ensures it won't be evicted

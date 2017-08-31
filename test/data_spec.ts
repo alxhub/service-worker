@@ -12,6 +12,11 @@ const dist = new MockFileSystemBuilder()
   .addFile('/foo.txt', 'this is foo')
   .addFile('/bar.txt', 'this is bar')
   .addFile('/api/test', 'version 1')
+  .addFile('/api/a', 'version A')
+  .addFile('/api/b', 'version B')
+  .addFile('/api/c', 'version C')
+  .addFile('/api/d', 'version D')
+  .addFile('/api/e', 'version E')
   .build();
 
 
@@ -37,7 +42,7 @@ const manifest: Manifest = {
   dataGroups: [
     {
       name: 'test',
-      maxSize: 5,
+      maxSize: 3,
       patterns: ['^/api/.*$'],
       timeoutMs: 1000,
       maxAge: 5000,
@@ -92,6 +97,24 @@ describe('data cache', () => {
     scope.advance(10000);
     scope.updateServerState(serverUpdate);
     expect(await makeRequest(scope, '/api/test')).toEqual('version 2');
+  });
+
+  it('expires the least recently used entry', async () => {
+    expect(await makeRequest(scope, '/api/a')).toEqual('version A');
+    expect(await makeRequest(scope, '/api/b')).toEqual('version B');
+    expect(await makeRequest(scope, '/api/c')).toEqual('version C');
+    expect(await makeRequest(scope, '/api/d')).toEqual('version D');
+    expect(await makeRequest(scope, '/api/e')).toEqual('version E');
+    server.clearRequests();
+    expect(await makeRequest(scope, '/api/c')).toEqual('version C');
+    expect(await makeRequest(scope, '/api/d')).toEqual('version D');
+    expect(await makeRequest(scope, '/api/e')).toEqual('version E');
+    server.assertNoOtherRequests();
+    expect(await makeRequest(scope, '/api/a')).toEqual('version A');
+    expect(await makeRequest(scope, '/api/b')).toEqual('version B');
+    server.assertSawRequestFor('/api/a');
+    server.assertSawRequestFor('/api/b');
+    server.assertNoOtherRequests();
   });
 });
 
