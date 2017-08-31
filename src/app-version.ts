@@ -1,5 +1,6 @@
 import {Adapter, Context} from './adapter';
 import {UpdateSource} from './api';
+import {DataGroup} from './data';
 import {Database} from './database';
 import {Manifest} from './manifest';
 
@@ -9,6 +10,7 @@ export class AppVersion implements UpdateSource {
   private hashTable = new Map<string, string>();
   private assetGroupsByName = new Map<string, AssetGroup>();
   private assetGroups: AssetGroup[];
+  private dataGroups: DataGroup[];
 
   /**
    * Tracks whether the manifest has encountered any inconsistencies.
@@ -41,6 +43,9 @@ export class AppVersion implements UpdateSource {
 
     // Populate the `assetGroupsByName` map.
     this.assetGroups.forEach(group => this.assetGroupsByName.set(group.name, group));
+
+    // Process each `DataGroup` declared in the manifest.
+    this.dataGroups = (manifest.dataGroups || []).map(config => new DataGroup(this.scope, this.adapter, config, this.database, `data:${config.name}`));
   }
 
   /**
@@ -65,12 +70,12 @@ export class AppVersion implements UpdateSource {
     }
   }
 
-  handleFetch(req: Request, context: Context): Promise<Response|null> {
+  async handleFetch(req: Request, context: Context): Promise<Response|null> {
     // Check the request against each `AssetGroup` in sequence. If an `AssetGroup` can't handle the request,
     // it will return `null`. Thus, the first non-null response is the SW's answer to the request. So reduce
     // the group list, keeping track of a possible response. If there is one, it gets passed through, and if
     // not the next group is consulted to produce a candidate response.
-    return this.assetGroups.reduce<Promise<Response|null>>(async (potentialResponse, group) => {
+    const asset = await this.assetGroups.reduce(async (potentialResponse, group) => {
       // Wait on the previous potential response. If it's not null, it should just be passed through.
       const resp = await potentialResponse;
       if (resp !== null) {
@@ -80,6 +85,22 @@ export class AppVersion implements UpdateSource {
       // No response has been found yet. Maybe this group will have one.
       return group.handleFetch(req, context);
     }, Promise.resolve(null));
+
+    // The result of the above is the asset response, if there is any, or null otherwise. Return the asset
+    // response if there was one. If not, check with the data caching groups.
+    if (asset !== null) {
+      return asset;
+    }
+  
+    // Perform the same reduction operation as above, 
+    return this.dataGroups.reduce(async (potentialResponse, group) => {
+      const resp = await potentialResponse;
+      if (resp !== null) {
+        return resp;
+      }
+
+      return group.handleFetch(req, context);
+    }, asset);
   }
 
   async lookupResourceWithHash(url: string, hash: string): Promise<Response|null> {

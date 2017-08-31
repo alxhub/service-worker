@@ -73,7 +73,7 @@ export class MockServerState {
     const url = req.url.split('?')[0];
     this.requests.push(req);
     if (this.resources.has(url)) {
-      return this.resources.get(url)!;
+      return this.resources.get(url)!.clone();
     }
     return new MockResponse(null, {status: 404, statusText: 'Not Found'});
   }
@@ -128,7 +128,7 @@ export function tmpManifestSingleAssetGroup(fs: MockFileSystem): Manifest {
         mode: 'prefetch',
         urls: files,
         patterns: [],
-      }
+      },
     ],
     hashTable,
   };

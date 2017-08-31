@@ -2,6 +2,10 @@ import {Adapter, Context} from './adapter';
 import {Database, Table} from './database';
 import {DataGroupConfig} from './manifest';
 
+interface AgeRecord {
+  age: number;
+}
+
 interface LruNode {
   url: string;
   previous: string|null;
@@ -176,13 +180,18 @@ export class DataGroup {
   private _lru: LruList|null = null;
 
   private readonly lruTable: Promise<Table>;
+  private readonly ageTable: Promise<Table>;
 
   constructor(private scope: ServiceWorkerGlobalScope, private adapter: Adapter, private config: DataGroupConfig, private db: Database, private prefix: string) {
     this.patterns = this.config.patterns.map(pattern => new RegExp(pattern));
     this.cache = this.scope.caches.open(`${this.prefix}:dynamic:${this.config.name}:cache`);
     this.lruTable = this.db.open(`${this.prefix}:dynamic:${this.config.name}:lru`);
+    this.ageTable = this.db.open(`${this.prefix}:dynamic:${this.config.name}:age`);
   }
 
+  /**
+   * Lazily initialize/load the LRU chain.
+   */
   async lru(): Promise<LruList> {
     if (this._lru === null) {
       const table = await this.lruTable;
@@ -195,6 +204,9 @@ export class DataGroup {
     return this._lru;
   }
 
+  /**
+   * Sync the LRU chain to non-volatile storage.
+   */
   async syncLru(): Promise<void> {
     if (this._lru === null) {
       return;
@@ -218,45 +230,106 @@ export class DataGroup {
         return null;
       case 'GET':
       case 'HEAD':
-        // First, mark that we accessed this URL.
-        await lru.accessed(req.url);
-
         // Look for a response in the cache. If one exists, return it.
         const cache = await this.cache;
         let res = await cache.match(req);
         if (res !== undefined) {
-          // Successful match from the cache. Use the response.
-          return res;
-        }
+          // A response was found in the cache, but its age is not yet known. Look it up.
+          try {
+            const ageTable = await this.ageTable;
+            const age = this.adapter.time - (await ageTable.read<AgeRecord>(req.url)).age;
+            // If the response is young enough, use it.
+            if (age <= this.config.maxAge) {
+              // Successful match from the cache. Use the response, after marking it as having
+              // been accessed.
+              await lru.accessed(req.url);
+              return res;
+            }
 
-        // No match from the cache. Go to the network.
-        res = await this.scope.fetch(req);
+            // Otherwise, or if there was an error, assume the response is expired, and evict it.
+          } catch (e) {
+            // Some error getting the age for the response. Assume it's expired.
+          }
 
-        // TODO: handle timeouts
-        
-        // Don't cache failed responses
-        if (!res.ok) {
-          return res;
-        }
-
-        // Determine if an eviction is needed.
-        if (lru.size >= this.config.maxSize) {
-          // Evict a URL from the cache.
-          const evictedUrl = lru.pop();
+          lru.remove(req.url);
           await this.clearCacheForUrl(req.url);
+
+          // TODO: avoid duplicate in event of network timeout, maybe.
+          await this.syncLru();
         }
 
-        // Cache the response.
-        await cache.put(req, res.clone());
-        await this.syncLru();
+        // No match from the cache. Go to the network. Note that this is not an 'await'
+        // call, networkFetch is the actual Promise. This is due to timeout handling.
+        const networkFetch = this.scope.fetch(req);
 
+        if (this.config.timeoutMs !== undefined) {
+          const timeout = this.adapter.timeout(this.config.timeoutMs) as Promise<undefined>;
+          res = await Promise.race([networkFetch, timeout]);
+        } else {
+          // Do a plain fetch.
+          res = await networkFetch;
+        }
+
+        // Define the operation for caching the response from the server. This has to happen all
+        // at once, so that the cache and LRU tracking remain in sync. If the network request
+        // completes before the timeout, this logic will be run inline with the response flow.
+        // If the request times out on the server, an error will be returned but the real network
+        // request will still be running in the background, to be cached when it completes.
+        const cacheResponse = async (res: Response) => {
+          // Only cache successful responses.
+          if (!res.ok) {
+            return;
+          }
+
+          // TODO: evaluate for possible race conditions during flaky network periods.
+
+          // Mark this resource as having been accessed recently. This ensures it won't be evicted
+          // until enough other resources are requested that it falls off the end of the LRU chain.
+          lru.accessed(req.url);
+
+          // Store the response in the cache.
+          await cache.put(req, res);
+
+          // Store the age of the cache.
+          const ageTable = await this.ageTable;
+          await ageTable.write(req.url, {age: this.adapter.time});
+
+          // Sync the LRU chain to non-volatile storage.
+          await this.syncLru();
+        };
+
+        // Since fetch() will always return a response, undefined indicates a timeout.
+        if (res === undefined) {
+          // The request timed out. Return a Gateway Timeout error.
+          res = this.adapter.newResponse(null, {status: 504, statusText: 'Gateway Timeout'});
+
+          // Cache the network response eventually.
+          ctx.waitUntil((async () => {
+            try {
+              cacheResponse(await networkFetch);
+            } catch (e) {
+              // TODO: handle this error somehow?
+            }
+          })());
+        }
+
+        // The request completed in time, so cache it inline with the response flow.
+        // Make sure to clone it so the real response can still be returned to the user.
+        await cacheResponse(res.clone());
         return res;
       default:
         // This was a mutating request. Assume the cache for this URL is no longer valid.
         const wasCached = lru.remove(req.url);
+        
+        // If there was a cached entry, remove it.
         if (wasCached) {
           await this.clearCacheForUrl(req.url);
         }
+
+        // Sync the LRU chain to non-volatile storage.
+        await this.syncLru();
+
+        // Finally, fall back on the network.
         return this.scope.fetch(req);
     }
   }
@@ -267,5 +340,7 @@ export class DataGroup {
       cache.delete(this.adapter.newRequest(url, {method: 'GET'})),
       cache.delete(this.adapter.newRequest(url, {method: 'HEAD'})),
     ]);
+    const ageTable = await this.ageTable;
+    await ageTable.delete(url);
   }
 }

@@ -21,6 +21,8 @@ export interface DataGroupConfig {
   name: string;
   patterns: string[];
   maxSize: number;
+  timeoutMs?: number;
+  maxAge: number;
 }
 
 export function hashManifest(manifest: Manifest): ManifestHash {

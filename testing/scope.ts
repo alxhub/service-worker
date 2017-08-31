@@ -33,6 +33,13 @@ export class SwTestHarness implements ServiceWorkerGlobalScope, Adapter, Context
     scope: 'http://localhost/',
   } as any;
 
+  time: number = 0;
+  private timers: {
+    at: number,
+    fn: Function,
+    fired: boolean,
+  }[] = [];
+
   constructor(private server: MockServerState, readonly caches: MockCacheStorage) {}
 
   updateServerState(server?: MockServerState): void {
@@ -76,6 +83,28 @@ export class SwTestHarness implements ServiceWorkerGlobalScope, Adapter, Context
     this.eventHandlers.get('fetch')!.call(this, event);
 
     return [event.response, ctx.ready]; 
+  }
+
+  timeout(ms: number): Promise<void> {
+    return new Promise(resolve => {
+      this.timers.push({
+        at: this.time + ms,
+        fn: resolve,
+        fired: false,
+      });
+    });
+  }
+
+  advance(by: number): void {
+    this.time += by;
+    this
+      .timers
+      .filter(timer => !timer.fired)
+      .filter(timer => timer.at <= this.time)
+      .forEach(timer => {
+        timer.fired = true;
+        timer.fn();
+      });
   }
 }
 

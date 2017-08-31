@@ -106,7 +106,11 @@ export class MockCache implements Cache {
   async match(request: RequestInfo, options?: CacheQueryOptions): Promise<Response> {
     const url = (typeof request === 'string' ? request : request.url);
     // TODO: cleanup typings. Typescript doesn't know this can resolve to undefined.
-    return this.cache.get(url)!;
+    let res = this.cache.get(url);
+    if (res !== undefined) {
+      res = res.clone();
+    }
+    return res!;
   }
 
 
@@ -124,7 +128,7 @@ export class MockCache implements Cache {
 
   async put(request: RequestInfo, response: Response): Promise<void> {
     const url = (typeof request === 'string' ? request : request.url);
-    this.cache.set(url, response);
+    this.cache.set(url, response.clone());
     return;
   }
 
