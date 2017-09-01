@@ -146,6 +146,26 @@ describe('Driver', () => {
     expect(await makeRequest(scope, '/bar.txt')).toEqual('this is bar');
     serverUpdate.assertNoOtherRequests();
   });
+  
+  it('checks for updates on restart', async () => {
+    expect(await makeRequest(scope, '/foo.txt')).toEqual('this is foo');
+    await driver.initialized;
+
+    scope = new SwTestHarnessBuilder()
+      .withCacheState(scope.caches.dehydrate())
+      .withServerState(serverUpdate)
+      .build();
+    driver = new Driver(scope, scope, new CacheDatabase(scope, scope));
+    expect(await makeRequest(scope, '/foo.txt')).toEqual('this is foo');
+    await driver.initialized;
+    serverUpdate.assertNoOtherRequests();
+
+    scope.advance(12000);
+    await driver.idle.empty;
+    serverUpdate.assertSawRequestFor('/ngsw.json');
+    serverUpdate.assertSawRequestFor('/foo.txt');
+    serverUpdate.assertNoOtherRequests();
+  });
 
   it('preserves multiple client assignments across restarts', async () => {
     expect(await makeRequest(scope, '/foo.txt')).toEqual('this is foo');
@@ -163,7 +183,6 @@ describe('Driver', () => {
     driver = new Driver(scope, scope, new CacheDatabase(scope, scope));
 
     expect(await makeRequest(scope, '/foo.txt')).toEqual('this is foo');
-    await driver.initialized;
     expect(await makeRequest(scope, '/foo.txt', 'new')).toEqual('this is foo v2');
     serverUpdate.assertNoOtherRequests();
   });

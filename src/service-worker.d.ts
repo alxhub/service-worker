@@ -114,7 +114,7 @@ interface PushMessageData {
 
 // Sync API
 
-interface SyncEvent extends Event {
+interface SyncEvent extends ExtendableEvent {
 	lastChance: boolean;
 	tag: string;
 }
@@ -131,7 +131,8 @@ interface ServiceWorkerGlobalScope {
   addEventListener(event: 'message', fn: (event?: MessageEvent & ExtendableEvent) => any): void;
   addEventListener(event: 'fetch', fn: (event?: FetchEvent) => any): void;
   addEventListener(event: 'install', fn: (event?: ExtendableEvent) => any): void;
-  addEventListener(event: 'push', fn: (event?: PushEvent) => any): void;
+	addEventListener(event: 'push', fn: (event?: PushEvent) => any): void;
+	addEventListener(event: 'sync', fn: (event?: SyncEvent) => any): void;
 
   fetch(request: Request|string): Promise<Response>;
   skipWaiting(): void;

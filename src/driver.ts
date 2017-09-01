@@ -2,12 +2,15 @@ import {Adapter, Context} from './adapter';
 import {UpdateSource} from './api';
 import {AppVersion} from './app-version';
 import {Database, Table} from './database';
+import {IdleScheduler} from './idle';
 import {Manifest, ManifestHash, hashManifest} from './manifest';
 
 type ClientId = string;
 
 type ManifestMap = {[hash: string]: Manifest};
 type ClientAssignments = {[id: string]: ManifestHash};
+
+const SYNC_THRESHOLD = 5000;
 
 interface LatestEntry {
   latest: string;
@@ -59,9 +62,17 @@ export class Driver implements UpdateSource {
    */
   private latestHash: ManifestHash|null = null;
 
+  /**
+   * A scheduler which manages a queue of tasks that need to be executed when the SW is not doing any
+   * other work (not processing any other requests).
+   */
+  idle: IdleScheduler;
+
   constructor(private scope: ServiceWorkerGlobalScope, private adapter: Adapter, private db: Database) {
     // Listen to fetch events.
     this.scope.addEventListener('fetch', (event) => this.onFetch(event!));
+
+    this.idle = new IdleScheduler(this.adapter, SYNC_THRESHOLD);
   }
 
   private onFetch(event: FetchEvent): void {
@@ -118,6 +129,12 @@ export class Driver implements UpdateSource {
       return this.scope.fetch(event.request);
     }
 
+    // Trigger the idle scheduling system. The Promise returned by trigger() will resolve after
+    // a specific amount of time has passed. If trigger() hasn't been called again by then (e.g.
+    // on a subsequent request), the idle task queue will be drained and the Promise won't resolve
+    // until that operation is complete as well.
+    event.waitUntil(this.idle.trigger());
+
     // The AppVersion returned a usable response, so return it.
     return res;
   }
@@ -148,6 +165,13 @@ export class Driver implements UpdateSource {
         table.read<ClientAssignments>('assignments'),
         table.read<LatestEntry>('latest'),
       ]);
+
+      // Successfully loaded from saved state. This implies a manifest exists, so the update check needs
+      // to happen in the background.
+      this.idle.schedule(async () => {
+        await this.checkForUpdate();
+      });
+
     } catch (_) {
       // Something went wrong. Try to start over by fetching a new manifest from the server and building
       // up an empty initial state.
@@ -191,7 +215,6 @@ export class Driver implements UpdateSource {
           // initialization either succeeded or was scheduled. If it fails, then full initialization
           // was attempted and failed.
           await this.scheduleInitialization(this.versions.get(hash)!);
-          return true;
         } catch (err) {
           return false;
         }
@@ -322,8 +345,7 @@ export class Driver implements UpdateSource {
     if (this.scope.registration.scope.indexOf('://localhost') > -1) {
       return initialize();
     }
-    // TODO: schedule this to happen asynchronously.
-    return initialize();
+    this.idle.schedule(initialize);
   }
 
   private versionFailed(appVersion: AppVersion, err: Error): void {
