@@ -455,6 +455,20 @@ export class Driver implements UpdateSource {
     ]);
   }
 
+  async cleanupCaches(): Promise<void> {
+    await this.initialized;
+    const activeClients = (await this.scope.clients.matchAll()).map(client => client.id);
+    const knownClients: ClientId[] = [];
+
+    const clientCountByVersion = new Map<string, number>();
+    this.clientVersionMap.forEach((version, clientId) => {
+      knownClients.push(clientId);
+      clientCountByVersion.set(version, 1 + (clientCountByVersion.get(version) || 0));
+    });
+
+    const obsoleteClients = knownClients.filter(id => activeClients.indexOf(id) === -1);
+  }
+
   /**
    * Determine if a specific version of the given resource is cached anywhere within the SW,
    * and fetch it if so.
