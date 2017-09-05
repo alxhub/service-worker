@@ -208,7 +208,7 @@ describe('Driver', () => {
     serverUpdate.assertNoOtherRequests();
   });
   
-  fit('cleans up properly on restart', async () => {
+  it('cleans up properly on restart', async () => {
     expect(await makeRequest(scope, '/foo.txt')).toEqual('this is foo');
     await driver.initialized;
 
@@ -231,7 +231,6 @@ describe('Driver', () => {
     expect(await makeRequest(scope, '/foo.txt')).toEqual('this is foo v2');
 
     const oldManifestHash = sha1(JSON.stringify(manifest));
-    console.log('checking cleanup');
     const keys = await scope.caches.keys();
     const hasOldCaches = keys.some(name => name.startsWith(oldManifestHash + ':'));
     expect(hasOldCaches).toEqual(false);

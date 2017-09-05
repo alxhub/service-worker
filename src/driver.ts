@@ -170,11 +170,8 @@ export class Driver implements UpdateSource {
       // to happen in the background.
       this.idle.schedule(async () => {
         await this.checkForUpdate();
-        console.log('waiting for cleanup');
         await this.cleanupCaches();
-        console.log('cleanup caches done');
       });
-
     } catch (_) {
       // Something went wrong. Try to start over by fetching a new manifest from the server and building
       // up an empty initial state.
@@ -478,13 +475,13 @@ export class Driver implements UpdateSource {
 
     // Next, determine the set of versions which are still used. All others can be removed.
     const usedVersions = new Set<string>();
-    this.clientVersionMap.forEach(version => usedVersions.add(version));
+    this.clientVersionMap.forEach((_, version) => usedVersions.add(version));
 
     // Collect all obsolete versions by filtering out used versions from the set of all versions.
     const obsoleteVersions = Array
-      .from(this.clientVersionMap.keys())
+      .from(this.versions.keys())
       .filter(version => !usedVersions.has(version) && version !== this.latestHash);
-    
+
     // Remove all the versions which are no longer used.
     await obsoleteVersions.reduce(async (previous, version) => {
       // Wait for the other cleanup operations to complete.
