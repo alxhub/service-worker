@@ -58,7 +58,6 @@ interface Clients {
 	claim(): Promise<any>;
 	get(id: string): Promise<Client>;
 	matchAll(options?: ClientMatchOptions): Promise<Array<Client>>;
-	openWindow(url: string): Promise<WindowClient>;
 }
 
 interface ClientMatchOptions {

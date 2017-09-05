@@ -26,8 +26,32 @@ export class SwTestHarnessBuilder {
   }
 }
 
+export class MockClients implements Clients {
+  private ids = new Set<string>();
+
+  add(clientId: string): void {
+    this.ids.add(clientId);
+  }
+
+  remove(clientId: string): void {
+    this.ids.delete(clientId);
+  }
+
+  async get(id: string): Promise<Client> {
+    return {id} as any;
+  }
+
+  async matchAll(): Promise<Client[]> {
+    return Array
+      .from(this.ids.keys())
+      .map(id => ({id} as any));
+  }
+
+  async claim(): Promise<any> {}
+}
+
 export class SwTestHarness implements ServiceWorkerGlobalScope, Adapter, Context {
-  readonly clients: Clients = null!;
+  readonly clients = new MockClients();
   private eventHandlers = new Map<string, Function>();
   readonly registration: ServiceWorkerRegistration = {
     scope: 'http://localhost/',

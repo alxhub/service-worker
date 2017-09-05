@@ -170,6 +170,9 @@ export class Driver implements UpdateSource {
       // to happen in the background.
       this.idle.schedule(async () => {
         await this.checkForUpdate();
+        console.log('waiting for cleanup');
+        await this.cleanupCaches();
+        console.log('cleanup caches done');
       });
 
     } catch (_) {
@@ -456,17 +459,57 @@ export class Driver implements UpdateSource {
   }
 
   async cleanupCaches(): Promise<void> {
+    // Make sure internal state has been initialized before attempting to clean up caches.
     await this.initialized;
-    const activeClients = (await this.scope.clients.matchAll()).map(client => client.id);
-    const knownClients: ClientId[] = [];
 
-    const clientCountByVersion = new Map<string, number>();
-    this.clientVersionMap.forEach((version, clientId) => {
-      knownClients.push(clientId);
-      clientCountByVersion.set(version, 1 + (clientCountByVersion.get(version) || 0));
-    });
+    // Query for all currently active clients, and list the client ids. This may skip some
+    // clients in the browser back-forward cache, but not much can be done about that.
+    const activeClients: ClientId[] = (await this.scope.clients.matchAll()).map(client => client.id);
 
-    const obsoleteClients = knownClients.filter(id => activeClients.indexOf(id) === -1);
+    // A simple list of client ids that the SW has kept track of. Subtracting activeClients
+    // from this list will result in the set of client ids which are being tracked but are no
+    // longer used in the browser, and thus can be cleaned up.
+    const knownClients: ClientId[] = Array.from(this.clientVersionMap.keys());
+
+    // Remove clients in the clientVersionMap that are no longer active.
+    knownClients
+      .filter(id => activeClients.indexOf(id) === -1)
+      .forEach(id => this.clientVersionMap.delete(id));
+
+    // Next, determine the set of versions which are still used. All others can be removed.
+    const usedVersions = new Set<string>();
+    this.clientVersionMap.forEach(version => usedVersions.add(version));
+
+    // Collect all obsolete versions by filtering out used versions from the set of all versions.
+    const obsoleteVersions = Array
+      .from(this.clientVersionMap.keys())
+      .filter(version => !usedVersions.has(version) && version !== this.latestHash);
+    
+    // Remove all the versions which are no longer used.
+    await obsoleteVersions.reduce(async (previous, version) => {
+      // Wait for the other cleanup operations to complete.
+      await previous;
+
+      // Try to get past the failure of one particular version to clean up (this shouldn't happen,
+      // but handle it just in case).
+      try {
+        // Get ahold of the AppVersion for this particular hash.
+        const instance = this.versions.get(version)!;
+
+        // Delete it from the canonical map.
+        this.versions.delete(version);
+
+        // Clean it up.
+        await instance.cleanup();
+      } catch (e) {
+        // Oh well? Not much that can be done here. These caches will be removed when the SW revs
+        // its format version, which happens from time to time.
+      }
+
+      const data = version
+    }, Promise.resolve());
+
+    await this.sync();
   }
 
   /**

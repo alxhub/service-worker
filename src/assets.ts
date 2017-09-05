@@ -45,6 +45,10 @@ export abstract class AssetGroup {
 
   abstract initializeFully(updateFrom?: UpdateSource): Promise<void>;
 
+  async cleanup(): Promise<void> {
+    await this.scope.caches.delete(`${this.prefix}:${this.config.name}:cache`);
+  }
+
   async handleFetch(req: Request, ctx: Context): Promise<Response|null> {
     // Either the request matches one of the known resource URLs, one of the patterns for
     // dynamically matched URLs, or neither. Determine which is the case for this request in

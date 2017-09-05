@@ -342,6 +342,15 @@ export class DataGroup {
     }
   }
 
+  async cleanup(): Promise<void> {
+    // Remove both the cache and the database entries which track LRU stats.
+    await Promise.all([
+      this.scope.caches.delete(`${this.prefix}:dynamic:${this.config.name}:cache`),
+      this.db.delete(`${this.prefix}:dynamic:${this.config.name}:age`),
+      this.db.delete(`${this.prefix}:dynamic:${this.config.name}:lru`),
+    ]);
+  }
+
   private async clearCacheForUrl(url: string): Promise<void> {
     const cache = await this.cache;
     await Promise.all([

@@ -3,6 +3,7 @@
 import {CacheDatabase} from '../src/db-cache';
 import {Driver} from '../src/driver';
 import {Manifest} from '../src/manifest';
+import {sha1} from '../src/sha1';
 
 import {MockRequest} from '../testing/fetch';
 import {MockFileSystemBuilder, MockServerStateBuilder, tmpHashTableForFs} from '../testing/mock';
@@ -186,12 +187,62 @@ describe('Driver', () => {
     expect(await makeRequest(scope, '/foo.txt', 'new')).toEqual('this is foo v2');
     serverUpdate.assertNoOtherRequests();
   });
+
+  it('cleans up properly when manually requested', async () => {
+    expect(await makeRequest(scope, '/foo.txt')).toEqual('this is foo');
+    await driver.initialized;
+
+    scope.updateServerState(serverUpdate);
+    expect(await driver.checkForUpdate()).toEqual(true);
+    serverUpdate.clearRequests();
+
+    expect(await makeRequest(scope, '/foo.txt', 'new')).toEqual('this is foo v2');
+
+    // Delete the default client.
+    scope.clients.remove('default');
+
+    // After this, the old version should no longer be cached.
+    await driver.cleanupCaches();
+    expect(await makeRequest(scope, '/foo.txt')).toEqual('this is foo v2');
+
+    serverUpdate.assertNoOtherRequests();
+  });
+  
+  fit('cleans up properly on restart', async () => {
+    expect(await makeRequest(scope, '/foo.txt')).toEqual('this is foo');
+    await driver.initialized;
+
+    scope = new SwTestHarnessBuilder()
+      .withCacheState(scope.caches.dehydrate())
+      .withServerState(serverUpdate)
+      .build();
+    driver = new Driver(scope, scope, new CacheDatabase(scope, scope));
+    expect(await makeRequest(scope, '/foo.txt')).toEqual('this is foo');
+    await driver.initialized;
+    serverUpdate.assertNoOtherRequests();
+
+    scope.clients.remove('default');
+
+    scope.advance(12000);
+    await driver.idle.empty;
+    serverUpdate.clearRequests();
+
+    driver = new Driver(scope, scope, new CacheDatabase(scope, scope));
+    expect(await makeRequest(scope, '/foo.txt')).toEqual('this is foo v2');
+
+    const oldManifestHash = sha1(JSON.stringify(manifest));
+    console.log('checking cleanup');
+    const keys = await scope.caches.keys();
+    const hasOldCaches = keys.some(name => name.startsWith(oldManifestHash + ':'));
+    expect(hasOldCaches).toEqual(false);
+  });
 });
 
 async function makeRequest(scope: SwTestHarness, url: string, clientId?: string): Promise<string|null> {
   const [resPromise, done] = scope.handleFetch(new MockRequest(url), clientId || 'default');
   await done;
   const res = await resPromise;
+  scope.clients.add(clientId || 'default');
   if (res !== undefined) {
     return res.text();
   }
