@@ -1,8 +1,8 @@
 import {PrefetchAssetGroup} from '../src/assets';
 import {CacheDatabase} from '../src/db-cache';
+import {IdleScheduler} from '../src/idle';
 import {SwTestHarnessBuilder} from '../testing/scope';
 import {MockFileSystemBuilder, MockServerStateBuilder, tmpManifestSingleAssetGroup, tmpHashTable} from '../testing/mock';
-
 
 const dist = new MockFileSystemBuilder()
   .addFile('/foo.txt', 'this is foo')
@@ -22,10 +22,14 @@ const scope = new SwTestHarnessBuilder()
 
 const db = new CacheDatabase(scope, scope);
 
+
+
 describe('prefetch assets', () => {
   let group: PrefetchAssetGroup;
+  let idle: IdleScheduler;
   beforeEach(() => {
-    group = new PrefetchAssetGroup(scope, scope, manifest.assetGroups![0], tmpHashTable(manifest), db, 'test');
+    idle = new IdleScheduler(null!, 3000);
+    group = new PrefetchAssetGroup(scope, scope, idle, manifest.assetGroups![0], tmpHashTable(manifest), db, 'test');
   });
   it('initializes without crashing', async () => {
     await group.initializeFully();
@@ -43,7 +47,7 @@ describe('prefetch assets', () => {
     const freshScope = new SwTestHarnessBuilder()
       .withCacheState(scope.caches.dehydrate())
       .build();
-    group = new PrefetchAssetGroup(freshScope, freshScope, manifest.assetGroups![0], tmpHashTable(manifest), new CacheDatabase(freshScope, freshScope), 'test');
+    group = new PrefetchAssetGroup(freshScope, freshScope, idle, manifest.assetGroups![0], tmpHashTable(manifest), new CacheDatabase(freshScope, freshScope), 'test');
     await group.initializeFully();
     const res1 = await group.handleFetch(scope.newRequest('/foo.txt'), scope);
     const res2 = await group.handleFetch(scope.newRequest('/bar.txt'), scope);
@@ -70,7 +74,7 @@ describe('prefetch assets', () => {
     const badScope = new SwTestHarnessBuilder()
       .withServerState(badServer)
       .build();
-    group = new PrefetchAssetGroup(badScope, badScope, manifest.assetGroups![0], tmpHashTable(manifest), new CacheDatabase(badScope, badScope), 'test');
+    group = new PrefetchAssetGroup(badScope, badScope, idle, manifest.assetGroups![0], tmpHashTable(manifest), new CacheDatabase(badScope, badScope), 'test');
     const err = await errorFrom(group.initializeFully());
     expect(err.message).toContain('Hash mismatch');
   });

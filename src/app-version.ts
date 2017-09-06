@@ -1,10 +1,11 @@
 import {Adapter, Context} from './adapter';
+import {AssetGroup, LazyAssetGroup, PrefetchAssetGroup} from './assets';
 import {UpdateSource} from './api';
 import {DataGroup} from './data';
 import {Database} from './database';
+import {IdleScheduler} from './idle';
 import {Manifest} from './manifest';
 
-import {AssetGroup, LazyAssetGroup, PrefetchAssetGroup} from './assets';
 
 export class AppVersion implements UpdateSource {
   private hashTable = new Map<string, string>();
@@ -21,7 +22,7 @@ export class AppVersion implements UpdateSource {
     return this._okay;
   }
 
-  constructor(private scope: ServiceWorkerGlobalScope, private adapter: Adapter, private database: Database, readonly manifest: Manifest, private manifestHash: string) {
+  constructor(private scope: ServiceWorkerGlobalScope, private adapter: Adapter, private database: Database, private idle: IdleScheduler, readonly manifest: Manifest, private manifestHash: string) {
     // The hashTable within the manifest is an Object - convert it to a Map for easier lookups.
     Object.keys(this.manifest.hashTable).forEach(url => {
       this.hashTable.set(url, this.manifest.hashTable[url]);
@@ -35,9 +36,9 @@ export class AppVersion implements UpdateSource {
       // Check the caching mode, which determines when resources will be fetched/updated.
       switch (config.mode) {
         case 'prefetch':
-          return new PrefetchAssetGroup(this.scope, this.adapter, config, this.hashTable, this.database, prefix);
+          return new PrefetchAssetGroup(this.scope, this.adapter, this.idle, config, this.hashTable, this.database, prefix);
         case 'lazy':
-          return new LazyAssetGroup(this.scope, this.adapter, config, this.hashTable, this.database, prefix);
+          return new LazyAssetGroup(this.scope, this.adapter, this.idle, config, this.hashTable, this.database, prefix);
       }
     });
 

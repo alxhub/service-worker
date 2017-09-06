@@ -200,7 +200,7 @@ export class Driver implements UpdateSource {
 
       // If the manifest is newly initialized, an AppVersion may have already been created for it.
       if (!this.versions.has(hash)) {
-        this.versions.set(hash, new AppVersion(this.scope, this.adapter, this.db, manifest, hash));
+        this.versions.set(hash, new AppVersion(this.scope, this.adapter, this.db, this.idle, manifest, hash));
       }
     });
 
@@ -384,7 +384,7 @@ export class Driver implements UpdateSource {
   }
 
   private async setupUpdate(manifest: Manifest, hash: string): Promise<void> {
-    const newVersion = new AppVersion(this.scope, this.adapter, this.db, manifest, hash);
+    const newVersion = new AppVersion(this.scope, this.adapter, this.db, this.idle, manifest, hash);
 
     // Try to determine a version that's safe to update from.
     let updateFrom: AppVersion|undefined = undefined;

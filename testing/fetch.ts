@@ -34,11 +34,38 @@ export class MockBody implements Body {
   }
 }
 
+export class MockHeaders implements Headers {
+  map = new Map<string, string>();
+  append(name: string, value: string): void {
+    this.map.set(name, value);
+  }
+
+  delete(name: string): void {
+    this.map.delete(name);
+  }
+
+  forEach(callback: Function): void {
+    this.map.forEach(callback as any);
+  }
+
+  get(name: string): string | null {
+    return this.map.get(name) || null;
+  }
+
+  has(name: string): boolean {
+    return this.map.has(name);
+  }
+
+  set(name: string, value: string): void {
+    this.map.set(name, value);
+  }
+}
+
 export class MockRequest extends MockBody implements Request {
   readonly cache: RequestCache = 'default';
   readonly credentials: RequestCredentials = 'omit';
   readonly destination: RequestDestination = 'document';
-  readonly headers: Headers = null!;
+  readonly headers: Headers = new MockHeaders();
   readonly integrity: string = '';
   readonly keepalive: boolean = true;
   readonly method: string = 'GET'
@@ -66,7 +93,7 @@ export class MockRequest extends MockBody implements Request {
 }
 
 export class MockResponse extends MockBody implements Response {
-  readonly headers: Headers = null!;
+  readonly headers: Headers = new MockHeaders();
   get ok(): boolean {
     return this.status >= 200 && this.status < 300;
   }

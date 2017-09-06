@@ -1,8 +1,13 @@
 import {Adapter, Context} from './adapter';
 import {UpdateSource} from './api';
-import {Database} from './database';
+import {Database, Table} from './database';
+import {IdleScheduler} from './idle';
 import {AssetGroupConfig} from './manifest';
 import {sha1} from './sha1';
+
+interface UrlMetadata {
+  ts: number;
+}
 
 export abstract class AssetGroup {
   /**
@@ -27,9 +32,15 @@ export abstract class AssetGroup {
    */
   readonly name: string;
 
+  /**
+   * Metadata associated with specific cache entries.
+   */
+  protected metadata: Promise<Table>;
+
   constructor(
       protected scope: ServiceWorkerGlobalScope,
       protected adapter: Adapter,
+      protected idle: IdleScheduler,
       protected config: AssetGroupConfig,
       protected hashes: Map<string, string>,
       protected db: Database,
@@ -41,6 +52,8 @@ export abstract class AssetGroup {
     // This is the primary cache, which holds all of the cached requests for this group. If a resource
     // isn't in this cache, it hasn't been fetched yet.
     this.cache = this.scope.caches.open(`${this.prefix}:${this.config.name}:cache`);
+
+    this.metadata = this.db.open(`${this.prefix}:${this.config.name}:meta`);
   }
 
   abstract initializeFully(updateFrom?: UpdateSource): Promise<void>;
@@ -65,8 +78,23 @@ export abstract class AssetGroup {
       const cachedResponse = await cache.match(req);
       if (cachedResponse !== undefined) {
         // A response has already been cached (which presumably matches the hash for this
-        // resource). Return it directly.
-        return cachedResponse;
+        // resource). Check whether it's safe to serve this resource from cache.
+        if (this.hashes.has(req.url)) {
+          // This resource has a hash, and thus is versioned by the manifest. It's safe to return
+          // the response.
+          return cachedResponse;
+        } else {
+          // This resource has no hash, and yet exists in the cache. Check how old this request is
+          // to make sure it's still usable.
+          if (await this.needToRevalidate(req, cachedResponse)) {
+            this.idle.schedule(async () => {
+              await this.fetchAndCacheOnce(req);
+            })
+          }
+
+          // In either case (revalidation or not), the cached response must be good.
+          return cachedResponse;
+        }
       }
       // No already-cached response exists, so attempt a fetch/cache operation.
       const res = await this.fetchAndCacheOnce(req);
@@ -76,6 +104,77 @@ export abstract class AssetGroup {
       return res.clone();
     } else {
       return null;
+    }
+  }
+
+  private async needToRevalidate(req: Request, res: Response): Promise<boolean> {
+    // Three different strategies apply here:
+    // 1) The request has a Cache-Control header, and thus expiration needs to be based on its age.
+    // 2) The request has an Expires header, and expiration is based on the current timestamp.
+    // 3) The request has no applicable caching headers, and must be revalidated.
+    if (res.headers.has('Cache-Control')) {
+      // Figure out if there is a max-age directive in the Cache-Control header.
+      const cacheControl = res.headers.get('Cache-Control')!;
+      const cacheDirectives = cacheControl
+        // Directives are comma-separated within the Cache-Control header value.
+        .split(',')
+        // Make sure each directive doesn't have extraneous whitespace.
+        .map(v => v.trim())
+        // Some directives have values (like maxage and s-maxage)
+        .map(v => v.split('='));
+      
+      // Lowercase all the directive names.
+      cacheDirectives.forEach(v => v[0] = v[0].toLowerCase());
+
+      // Find the max-age directive, if one exists.
+      const cacheAge = cacheDirectives
+        .filter(v => v[0] === 'max-age')
+        .map(v => v[1])[0];
+      if (cacheAge.length === 0) {
+        // No usable TTL defined. Must assume that the response is stale.
+        return true;
+      }
+      try {
+        const maxAge = 1000 * Number.parseInt(cacheAge);
+
+        // Determine the origin time of this request. If the SW has metadata on the request (which it
+        // should), it will have the time the request was added to the cache. If it doesn't for some
+        // reason, the request may have a Date header which will serve the same purpose.
+        let ts: number;
+        try {
+          // Check the metadata table. If a timestamp is there, use it.
+          const metaTable = await this.metadata;
+          ts = (await metaTable.read<UrlMetadata>(req.url)).ts;
+        } catch (e) {
+          // Otherwise, look for a Date header.
+          const date = res.headers.get('Date');
+          if (date === null) {
+            // Unable to determine when this response was created. Assume that it's stale, and
+            // revalidate it.
+            return true;
+          }
+          ts = Date.parse(date);
+        }
+        const age = this.adapter.time - ts;
+        return age > maxAge;
+      } catch (e) {
+        // Assume stale.
+        return true;
+      }
+    } else if (res.headers.has('Expires')) {
+      // Determine if the expiration time has passed.
+      const expiresStr = res.headers.get('Expires')!;
+      try {
+        // The request needs to be revalidated if the current time is later than the expiration
+        // time, if it parses correctly.
+        return this.adapter.time > Date.parse(expiresStr);
+      } catch (e) {
+        // The expiration date failed to parse, so revalidate as a precaution.
+        return true;
+      }
+    } else {
+      // No way to evaluate staleness, so assume the response is already stale.
+      return true;
     }
   }
 
@@ -168,7 +267,7 @@ export abstract class AssetGroup {
         // data, or because the version on the server really doesn't match. A cache-busting
         // request will differentiate these two situations.
         // TODO: handle case where the URL has parameters already (unlikely for assets).
-        const cacheBustedResult = await this.scope.fetch(req.url + '?ngsw-cache-bust=' + Math.random());
+        const cacheBustedResult = await this.scope.fetch(this.cacheBust(req.url));
         
         // If the response was unsuccessful, there's nothing more that can be done.
         if (!cacheBustedResult.ok) {
@@ -218,6 +317,10 @@ export abstract class AssetGroup {
 
     // No up-to-date version of this resource could be found.
     return false;
+  }
+
+  private cacheBust(url: string): string {
+    return url + (url.indexOf('?') === -1 ? '?' : '&') + 'ngsw-cache-bust=' + Math.random();
   }
 }
 
