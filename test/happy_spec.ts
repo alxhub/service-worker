@@ -14,15 +14,17 @@ const dist = new MockFileSystemBuilder()
   .addFile('/bar.txt', 'this is bar')
   .addFile('/baz.txt', 'this is baz')
   .addFile('/qux.txt', 'this is qux')
+  .addUnhashedFile('/unhashed/a.txt', 'this is unhashed', {'Cache-Control': 'max-age=10'})
   .build();
 
 
 const distUpdate = new MockFileSystemBuilder()
-.addFile('/foo.txt', 'this is foo v2')
-.addFile('/bar.txt', 'this is bar')
-.addFile('/baz.txt', 'this is baz v2')
-.addFile('/qux.txt', 'this is qux v2')
-.build();
+  .addFile('/foo.txt', 'this is foo v2')
+  .addFile('/bar.txt', 'this is bar')
+  .addFile('/baz.txt', 'this is baz v2')
+  .addFile('/qux.txt', 'this is qux v2')
+  .addUnhashedFile('/unhashed/a.txt', 'this is unhashed v2', {'Cache-Control': 'max-age=10'})
+  .build();
 
 const manifest: Manifest = {
   configVersion: 1,
@@ -34,7 +36,9 @@ const manifest: Manifest = {
         '/foo.txt',
         '/bar.txt',
       ],
-      patterns: [],
+      patterns: [
+        '/unhashed/.*',
+      ],
     },
     {
       name: 'other',
@@ -234,6 +238,43 @@ describe('Driver', () => {
     const keys = await scope.caches.keys();
     const hasOldCaches = keys.some(name => name.startsWith(oldManifestHash + ':'));
     expect(hasOldCaches).toEqual(false);
+  });
+
+  describe('unhashed requests', () => {
+    beforeEach(async () => {
+      expect(await makeRequest(scope, '/foo.txt')).toEqual('this is foo');
+      await driver.initialized;
+      server.clearRequests();
+    });
+
+    it('are cached appropriately', async () => {
+      expect(await makeRequest(scope, '/unhashed/a.txt')).toEqual('this is unhashed');
+      server.assertSawRequestFor('/unhashed/a.txt');
+      expect(await makeRequest(scope, '/unhashed/a.txt')).toEqual('this is unhashed');
+      server.assertNoOtherRequests();
+    });
+    
+    it('expire according to Cache-Control headers', async () => {
+      expect(await makeRequest(scope, '/unhashed/a.txt')).toEqual('this is unhashed');
+      server.clearRequests();
+
+      // Update the resource on the server.
+      scope.updateServerState(serverUpdate);
+
+      // Move ahead by 15 seconds.
+      scope.advance(15000);
+      expect(await makeRequest(scope, '/unhashed/a.txt')).toEqual('this is unhashed');
+      serverUpdate.assertNoOtherRequests();
+
+      // Another 6 seconds.
+      scope.advance(6000);
+      await driver.idle.empty;
+      serverUpdate.assertSawRequestFor('/unhashed/a.txt');
+
+      // Now the new version of the resource should be served.
+      expect(await makeRequest(scope, '/unhashed/a.txt')).toEqual('this is unhashed v2');
+      server.assertNoOtherRequests();
+    });
   });
 });
 

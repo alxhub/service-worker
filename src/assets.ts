@@ -130,12 +130,13 @@ export abstract class AssetGroup {
       const cacheAge = cacheDirectives
         .filter(v => v[0] === 'max-age')
         .map(v => v[1])[0];
-      if (cacheAge.length === 0) {
-        // No usable TTL defined. Must assume that the response is stale.
-        return true;
-      }
-      try {
-        const maxAge = 1000 * Number.parseInt(cacheAge);
+
+        if (cacheAge.length === 0) {
+          // No usable TTL defined. Must assume that the response is stale.
+          return true;
+        }
+        try {
+          const maxAge = 1000 * Number.parseInt(cacheAge);
 
         // Determine the origin time of this request. If the SW has metadata on the request (which it
         // should), it will have the time the request was added to the cache. If it doesn't for some
@@ -156,7 +157,7 @@ export abstract class AssetGroup {
           ts = Date.parse(date);
         }
         const age = this.adapter.time - ts;
-        return age > maxAge;
+        return age < 0 || age > maxAge;
       } catch (e) {
         // Assume stale.
         return true;
@@ -173,6 +174,8 @@ export abstract class AssetGroup {
         return true;
       }
     } else {
+      res.headers.forEach((k, v) => {
+      });
       // No way to evaluate staleness, so assume the response is already stale.
       return true;
     }
@@ -212,6 +215,14 @@ export abstract class AssetGroup {
       // is complete.
       const cache = await this.scope.caches.open(`${this.prefix}:${this.config.name}:cache`);
       await cache.put(req, res.clone());
+
+      // If the request is not hashed, update its metadata, especially the timestamp. This is needed
+      // for future determination of whether this cached response is stale or not.
+      if (!this.hashes.has(req.url)) {
+        const meta: UrlMetadata = {ts: this.adapter.time};
+        const metaTable = await this.metadata;
+        await metaTable.write(req.url, meta);
+      }
 
       return res;
     } finally {

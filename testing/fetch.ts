@@ -107,12 +107,21 @@ export class MockResponse extends MockBody implements Response {
     super(typeof body === 'string' ? body : null);
     this.status = (init.status !== undefined) ? init.status : 200;
     this.statusText = init.statusText || 'OK';
+    if (init.headers !== undefined) {
+      if (init.headers instanceof MockHeaders) {
+        this.headers = init.headers;
+      } else {
+        Object.keys(init.headers).forEach(header => {
+          this.headers.set(header, init.headers[header]);
+        });
+      }
+    }
   }
 
   clone(): Response {
     if (this.bodyUsed) {
       throw 'Body already consumed';
     }
-    return new MockResponse(this._body, {status: this.status, statusText: this.statusText})
+    return new MockResponse(this._body, {status: this.status, statusText: this.statusText, headers: this.headers})
   }
 }

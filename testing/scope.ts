@@ -57,14 +57,17 @@ export class SwTestHarness implements ServiceWorkerGlobalScope, Adapter, Context
     scope: 'http://localhost/',
   } as any;
 
-  time: number = 0;
+  time: number;
+
   private timers: {
     at: number,
     fn: Function,
     fired: boolean,
   }[] = [];
 
-  constructor(private server: MockServerState, readonly caches: MockCacheStorage) {}
+  constructor(private server: MockServerState, readonly caches: MockCacheStorage) {
+    this.time = Date.now();
+  }
 
   updateServerState(server?: MockServerState): void {
     this.server = server || EMPTY_SERVER_STATE;
@@ -135,7 +138,7 @@ export class SwTestHarness implements ServiceWorkerGlobalScope, Adapter, Context
 interface StaticFile {
   url: string;
   contents: string;
-  hash: string;
+  hash?: string;
 }
 
 export class AssetGroupBuilder {
@@ -143,8 +146,12 @@ export class AssetGroupBuilder {
 
   files: StaticFile[] = [];
 
-  addFile(url: string, contents: string): AssetGroupBuilder {
-    this.files.push({url, contents, hash: sha1(contents)});
+  addFile(url: string, contents: string, hashed: boolean = true): AssetGroupBuilder {
+    const file: StaticFile = {url, contents, hash: undefined};
+    if (hashed) {
+      file.hash = sha1(contents);
+    }
+    this.files.push(file);
     return this;
   }
 

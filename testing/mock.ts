@@ -2,8 +2,10 @@ import {Manifest, AssetGroupConfig} from '../src/manifest';
 import {sha1} from '../src/sha1';
 import {MockResponse} from './fetch';
 
+type HeaderMap = {[key: string]: string};
+
 export class MockFile {
-  constructor(readonly path: string, readonly contents: string) {}
+  constructor(readonly path: string, readonly contents: string, readonly headers = {}, readonly hashThisFile: boolean) {}
 
   get hash(): string {
     return sha1(this.contents);
@@ -13,8 +15,13 @@ export class MockFile {
 export class MockFileSystemBuilder {
   private resources = new Map<string, MockFile>();
 
-  addFile(path: string, contents: string): MockFileSystemBuilder {
-    this.resources.set(path, new MockFile(path, contents));
+  addFile(path: string, contents: string, headers?: HeaderMap): MockFileSystemBuilder {
+    this.resources.set(path, new MockFile(path, contents, headers, true));
+    return this;
+  }
+
+  addUnhashedFile(path: string, contents: string, headers?: HeaderMap): MockFileSystemBuilder {
+    this.resources.set(path, new MockFile(path, contents, headers, false));
     return this;
   }
 
@@ -49,7 +56,7 @@ export class MockServerStateBuilder {
   withStaticFiles(fs: MockFileSystem): MockServerStateBuilder {
     fs.list().forEach(path => {
       const file = fs.lookup(path)!;
-      this.resources.set(path, new MockResponse(file.contents));
+      this.resources.set(path, new MockResponse(file.contents, {headers: file.headers}));
     })
     return this;
   }
@@ -137,7 +144,10 @@ export function tmpManifestSingleAssetGroup(fs: MockFileSystem): Manifest {
 export function tmpHashTableForFs(fs: MockFileSystem): {[url: string]: string} {
   const table: {[url: string]: string} = {};
   fs.list().forEach(path => {
-    table[path] = fs.lookup(path)!.hash;
+    const file = fs.lookup(path)!;
+    if (file.hashThisFile) {
+      table[path] = file.hash;
+    }
   });
   return table;
 }
