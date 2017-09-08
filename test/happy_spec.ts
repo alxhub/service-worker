@@ -63,7 +63,9 @@ const manifestUpdate: Manifest = {
         '/foo.txt',
         '/bar.txt',
       ],
-      patterns: [],
+      patterns: [
+        '/unhashed/.*',
+      ],
     },
     {
       name: 'other',
@@ -274,6 +276,60 @@ describe('Driver', () => {
       // Now the new version of the resource should be served.
       expect(await makeRequest(scope, '/unhashed/a.txt')).toEqual('this is unhashed v2');
       server.assertNoOtherRequests();
+    });
+
+    it('survive serialization', async () => {
+      expect(await makeRequest(scope, '/unhashed/a.txt')).toEqual('this is unhashed');
+      server.clearRequests();
+
+      const state = scope.caches.dehydrate();
+      scope = new SwTestHarnessBuilder()
+        .withCacheState(state)
+        .withServerState(server)
+        .build();
+      driver = new Driver(scope, scope, new CacheDatabase(scope, scope));
+      expect(await makeRequest(scope, '/foo.txt')).toEqual('this is foo');
+      await driver.initialized;
+      server.assertNoRequestFor('/unhashed/a.txt');
+      server.clearRequests();
+
+      expect(await makeRequest(scope, '/unhashed/a.txt')).toEqual('this is unhashed');
+      server.assertNoOtherRequests();
+
+      // Advance the clock by 6 seconds, triggering the idle tasks. If an idle task
+      // was scheduled from the request above, it means that the metadata was not
+      // properly saved.
+      scope.advance(6000);
+      await driver.idle.empty;
+      server.assertNoRequestFor('/unhashed/a.txt');
+    });
+
+    it('get carried over during updates', async () => {
+      expect(await makeRequest(scope, '/unhashed/a.txt')).toEqual('this is unhashed');
+      server.clearRequests();
+
+      scope = new SwTestHarnessBuilder()
+        .withCacheState(scope.caches.dehydrate())
+        .withServerState(serverUpdate)
+        .build();
+      driver = new Driver(scope, scope, new CacheDatabase(scope, scope));
+      expect(await makeRequest(scope, '/foo.txt')).toEqual('this is foo');
+      await driver.initialized;
+
+      scope.advance(15000);
+      await driver.idle.empty;
+      serverUpdate.assertNoRequestFor('/unhashed/a.txt');
+      serverUpdate.clearRequests();
+
+      expect(await makeRequest(scope, '/unhashed/a.txt')).toEqual('this is unhashed');
+      serverUpdate.assertNoOtherRequests();
+
+      scope.advance(15000);
+      await driver.idle.empty;
+      serverUpdate.assertSawRequestFor('/unhashed/a.txt');
+
+      expect(await makeRequest(scope, '/unhashed/a.txt')).toEqual('this is unhashed v2');
+      serverUpdate.assertNoOtherRequests();
     });
   });
 });

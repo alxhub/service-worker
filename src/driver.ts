@@ -1,5 +1,5 @@
 import {Adapter, Context} from './adapter';
-import {UpdateSource} from './api';
+import {CacheState, UpdateSource} from './api';
 import {AppVersion} from './app-version';
 import {Database, Table} from './database';
 import {IdleScheduler} from './idle';
@@ -239,6 +239,11 @@ export class Driver implements UpdateSource {
     if (!this.versions.has(latest.latest)) {
       throw new Error(`Invariant violated (initialize): latest hash ${latest.latest} has no known manifest`);
     }
+
+    this.clientVersionMap.forEach((version, clientId) => {
+    });
+    this.versions.forEach((_, version) => {
+    });
   }
 
   private lookupVersionByHash(hash: ManifestHash, debugName: string = 'lookupVersionByHash'): AppVersion {
@@ -407,6 +412,11 @@ export class Driver implements UpdateSource {
     await this.sync();
 
     // TODO: notify applications about the newly active update.
+    
+    this.clientVersionMap.forEach((version, clientId) => {
+    });
+    this.versions.forEach((_, version) => {
+    });
   }
 
   async checkForUpdate(): Promise<boolean> {
@@ -475,7 +485,7 @@ export class Driver implements UpdateSource {
 
     // Next, determine the set of versions which are still used. All others can be removed.
     const usedVersions = new Set<string>();
-    this.clientVersionMap.forEach((_, version) => usedVersions.add(version));
+    this.clientVersionMap.forEach((version, _) => usedVersions.add(version));
 
     // Collect all obsolete versions by filtering out used versions from the set of all versions.
     const obsoleteVersions = Array
@@ -507,6 +517,10 @@ export class Driver implements UpdateSource {
     }, Promise.resolve());
 
     await this.sync();
+    this.clientVersionMap.forEach((version, clientId) => {
+    });
+    this.versions.forEach((_, version) => {
+    });
   }
 
   /**
@@ -533,5 +547,17 @@ export class Driver implements UpdateSource {
         // No result has been found yet. Try the next `AppVersion`.
         return version.lookupResourceWithHash(url, hash);
       }, Promise.resolve<Response|null>(null))
+  }
+
+  async lookupResourceWithoutHash(url: string): Promise<CacheState|null> {
+    await this.initialized;
+    const version = this.versions.get(this.latestHash!)!;
+    return version.lookupResourceWithoutHash(url);
+  }
+
+  async previouslyCachedResources(): Promise<string[]> {
+    await this.initialized;
+    const version = this.versions.get(this.latestHash!)!;
+    return version.previouslyCachedResources();
   }
 }

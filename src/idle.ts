@@ -29,7 +29,7 @@ export class IdleScheduler {
 
     await this.adapter.timeout(this.threshold);
 
-    if (this.scheduled.cancel) {
+    if (this.scheduled !== null && this.scheduled.cancel) {
       this.scheduled = null;
       return;
     }

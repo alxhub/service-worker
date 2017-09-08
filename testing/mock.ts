@@ -40,7 +40,12 @@ export class MockFileSystem {
   extend(): MockFileSystemBuilder {
     const builder = new MockFileSystemBuilder();
     Array.from(this.resources.keys()).forEach(path => {
-      builder.addFile(path, this.resources.get(path)!.contents);
+      const res = this.resources.get(path)!;
+      if (res.hashThisFile) {
+        builder.addFile(path, res.contents, res.headers);
+      } else {
+        builder.addUnhashedFile(path, res.contents, res.headers);
+      }
     });
     return builder;
   }

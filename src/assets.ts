@@ -1,13 +1,9 @@
 import {Adapter, Context} from './adapter';
-import {UpdateSource} from './api';
+import {CacheState, UpdateSource, UrlMetadata} from './api';
 import {Database, Table} from './database';
 import {IdleScheduler} from './idle';
 import {AssetGroupConfig} from './manifest';
 import {sha1} from './sha1';
-
-interface UrlMetadata {
-  ts: number;
-}
 
 export abstract class AssetGroup {
   /**
@@ -131,12 +127,12 @@ export abstract class AssetGroup {
         .filter(v => v[0] === 'max-age')
         .map(v => v[1])[0];
 
-        if (cacheAge.length === 0) {
-          // No usable TTL defined. Must assume that the response is stale.
-          return true;
-        }
-        try {
-          const maxAge = 1000 * Number.parseInt(cacheAge);
+      if (cacheAge.length === 0) {
+        // No usable TTL defined. Must assume that the response is stale.
+        return true;
+      }
+      try {
+        const maxAge = 1000 * Number.parseInt(cacheAge);
 
         // Determine the origin time of this request. If the SW has metadata on the request (which it
         // should), it will have the time the request was added to the cache. If it doesn't for some
@@ -157,6 +153,8 @@ export abstract class AssetGroup {
           ts = Date.parse(date);
         }
         const age = this.adapter.time - ts;
+        if (age < 0 || age > maxAge) {
+        }
         return age < 0 || age > maxAge;
       } catch (e) {
         // Assume stale.
@@ -174,11 +172,39 @@ export abstract class AssetGroup {
         return true;
       }
     } else {
+      // No way to evaluate staleness, so assume the response is already stale.
       res.headers.forEach((k, v) => {
       });
-      // No way to evaluate staleness, so assume the response is already stale.
       return true;
     }
+  }
+
+  async fetchFromCacheOnly(url: string): Promise<CacheState|null> {
+    const cache = await this.cache;
+    const metaTable = await this.metadata;
+
+    const response = await cache.match(this.adapter.newRequest(url));
+    if (response === undefined) {
+      return null;
+    }
+
+    let metadata: UrlMetadata|undefined = undefined;
+    try {
+      metadata = await metaTable.read<UrlMetadata>(url);
+    } catch (e) {
+      // Do nothing, not found.
+    }
+
+    return {response, metadata};
+  }
+
+  async unhashedResources(): Promise<string[]> {
+    const cache = await this.cache;
+    const keys = await cache.keys();
+    return keys
+      // TODO: optimize this
+      .filter(url => this.config.urls.indexOf(url) === -1)
+      .filter(url => this.patterns.some(pattern => pattern.test(url)));
   }
 
   protected async fetchAndCacheOnce(req: Request): Promise<Response> {
@@ -190,6 +216,7 @@ export abstract class AssetGroup {
       // complete, and hopefully it will have yielded a useful response.
       return this.inFlightRequests.get(req.url)!;
     }
+
 
     // No other caching operation is being attempted for this resource, so it will be owned here.
     // Go to the network and get the correct version.
@@ -204,6 +231,7 @@ export abstract class AssetGroup {
       // Wait for a response. If this fails, the request will remain in `inFlightRequests`
       // indefinitely.
       const res = await fetchOp;
+
 
       // It's very important that only successful responses are cached. Unsuccessful responses
       // should never be cached as this can completely break applications.
@@ -222,6 +250,7 @@ export abstract class AssetGroup {
         const meta: UrlMetadata = {ts: this.adapter.time};
         const metaTable = await this.metadata;
         await metaTable.write(req.url, meta);
+
       }
 
       return res;
@@ -340,8 +369,8 @@ export class PrefetchAssetGroup extends AssetGroup {
     // Open the cache which actually holds requests.
     const cache = await this.cache;
 
-    // Cache all resources serially. As this reduce proceeds, each Promise waits on
-    // the last before starting the fetch/cache operation for the next request. Any
+    // Cache all known resources serially. As this reduce proceeds, each Promise waits
+    // on the last before starting the fetch/cache operation for the next request. Any
     // errors cause fall-through to the final Promise which rejects.
     await this.config.urls.reduce(async (previous: Promise<void>, url: string) => {
       // Wait on all previous operations to complete.
@@ -366,7 +395,31 @@ export class PrefetchAssetGroup extends AssetGroup {
       // Otherwise, go to the network and hopefully cache the response (if successful).
       await this.fetchAndCacheOnce(req);
     }, Promise.resolve());
-    return null!;
+
+    // Handle updating of unknown (unhashed) resources.
+    if (updateFrom !== undefined) {
+      const metaTable = await this.metadata;
+      let resources = (await updateFrom.previouslyCachedResources());
+        resources = resources.filter(url => this.patterns.some(pattern => pattern.test(url)));
+      await resources.reduce(async (previous, url) => {
+        await previous;
+        const req = this.adapter.newRequest(url);
+
+        const alreadyCached = (await cache.match(req) !== undefined);
+        if (alreadyCached) {
+          return;
+        }
+
+        const res = await updateFrom.lookupResourceWithoutHash(url);
+        if (res === null || res.metadata === undefined) {
+          // Unexpected, but not harmful.
+          return;
+        }
+
+        await cache.put(req, res.response);
+        await metaTable.write(url, res.metadata);
+      }, Promise.resolve());
+    }
   }
 }
 

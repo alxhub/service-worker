@@ -1,6 +1,6 @@
 import {Adapter, Context} from './adapter';
 import {AssetGroup, LazyAssetGroup, PrefetchAssetGroup} from './assets';
-import {UpdateSource} from './api';
+import {UpdateSource, CacheState} from './api';
 import {DataGroup} from './data';
 import {Database} from './database';
 import {IdleScheduler} from './idle';
@@ -120,6 +120,23 @@ export class AppVersion implements UpdateSource {
     // TODO: no-op context and appropriate contract. Currently this is a violation of the typings and could
     // cause issues if handleFetch() has side effects. A better strategy to deal with side effects is needed.
     return this.handleFetch(req, null!);
+  }
+
+  lookupResourceWithoutHash(url: string): Promise<CacheState|null> {
+    return this.assetGroups.reduce(async (potentialResponse, group) => {
+      const resp = await potentialResponse;
+      if (resp !== null) {
+        return resp;
+      }
+
+      return group.fetchFromCacheOnly(url);
+    }, Promise.resolve<CacheState|null>(null));
+  }
+
+  previouslyCachedResources(): Promise<string[]> {
+    return this.assetGroups.reduce(async (resources, group) => {
+      return (await resources).concat(await group.unhashedResources());
+    }, Promise.resolve<string[]>([]));
   }
 
   async cleanup(): Promise<void> {

@@ -4,6 +4,7 @@ interface DehydratedResponse {
   body: string|null;
   status: number;
   statusText: string;
+  headers: {[name: string]: string};
 }
 
 type DehydratedCache = {[url: string]: DehydratedResponse};
@@ -74,7 +75,7 @@ export class MockCache implements Cache {
     if (hydrated !== undefined) {
       Object.keys(hydrated).forEach(url => {
         const resp = hydrated[url];
-        this.cache.set(url, new MockResponse(resp.body, {status: resp.status, statusText: resp.statusText}));
+        this.cache.set(url, new MockResponse(resp.body, {status: resp.status, statusText: resp.statusText, headers: resp.headers}));
       });
     }
   }
@@ -136,11 +137,18 @@ export class MockCache implements Cache {
     const dehydrated: DehydratedCache = {};
     Array.from(this.cache.keys()).forEach(url => {
       const resp = this.cache.get(url)! as MockResponse;
-      dehydrated[url] = {
+      const dehydratedResp = {
         body: resp._body,
         status: resp.status,
         statusText: resp.statusText,
-      };
+        headers: {},
+      } as DehydratedResponse;
+
+      resp.headers.forEach((value, name) => {
+        dehydratedResp.headers[name] = value;
+      });
+
+      dehydrated[url] = dehydratedResp;
     });
     return dehydrated;
   }
