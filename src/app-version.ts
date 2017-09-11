@@ -143,4 +143,8 @@ export class AppVersion implements UpdateSource {
     await Promise.all(this.assetGroups.map(group => group.cleanup()));
     await Promise.all(this.dataGroups.map(group => group.cleanup()));
   }
+
+  get appData(): Object|null {
+    return this.manifest.appData || null;
+  }
 }

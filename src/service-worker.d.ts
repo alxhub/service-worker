@@ -26,16 +26,16 @@ interface Cache {
 	addAll(requestArray: Array<Request>): Promise<void>;
 	'delete'(request: Request, options?: CacheStorageOptions): Promise<boolean>;
 	keys(request?: Request, options?: CacheStorageOptions): Promise<Array<string>>;
-	match(request: Request, options?: CacheStorageOptions): Promise<Response|undefined>;
+	match(request: Request, options?: CacheStorageOptions): Promise<Response | undefined>;
 	matchAll(request: Request, options?: CacheStorageOptions): Promise<Array<Response>>;
-	put(request: Request|string, response: Response): Promise<void>;
+	put(request: Request | string, response: Response): Promise<void>;
 }
 
 interface CacheStorage {
 	'delete'(cacheName: string): Promise<boolean>;
 	has(cacheName: string): Promise<boolean>;
 	keys(): Promise<Array<string>>;
-	match(request: Request, options?: CacheStorageOptions): Promise<Response|undefined>;
+	match(request: Request, options?: CacheStorageOptions): Promise<Response | undefined>;
 	open(cacheName: string): Promise<Cache>;
 }
 
@@ -52,6 +52,7 @@ interface Client {
 	frameType: ClientFrameType;
 	id: string;
 	url: string;
+	postMessage(message: any): void;
 }
 
 interface Clients {
@@ -79,9 +80,9 @@ type WindowClientState = "hidden" | "visible" | "prerender" | "unloaded";
 // Fetch API
 
 interface FetchEvent extends ExtendableEvent {
-  clientId: string|null;
-  request: Request;
-	respondWith(response: Promise<Response>|Response): Promise<Response>;
+	clientId: string | null;
+	request: Request;
+	respondWith(response: Promise<Response> | Response): Promise<Response>;
 }
 
 interface InstallEvent extends ExtendableEvent {
@@ -118,21 +119,26 @@ interface SyncEvent extends ExtendableEvent {
 	tag: string;
 }
 
+interface ExtendableMessageEvent extends ExtendableEvent {
+	data: any;
+	source: Client | Object;
+}
+
 // ServiceWorkerGlobalScope
 
 interface ServiceWorkerGlobalScope {
 
-  caches: CacheStorage;
-  clients: Clients;
-  registration: ServiceWorkerRegistration;
-  
-  addEventListener(event: 'activate', fn: (event?: ExtendableEvent) => any): void;
-  addEventListener(event: 'message', fn: (event?: MessageEvent & ExtendableEvent) => any): void;
-  addEventListener(event: 'fetch', fn: (event?: FetchEvent) => any): void;
-  addEventListener(event: 'install', fn: (event?: ExtendableEvent) => any): void;
+	caches: CacheStorage;
+	clients: Clients;
+	registration: ServiceWorkerRegistration;
+
+	addEventListener(event: 'activate', fn: (event?: ExtendableEvent) => any): void;
+	addEventListener(event: 'message', fn: (event?: MessageEvent & ExtendableEvent) => any): void;
+	addEventListener(event: 'fetch', fn: (event?: FetchEvent) => any): void;
+	addEventListener(event: 'install', fn: (event?: ExtendableEvent) => any): void;
 	addEventListener(event: 'push', fn: (event?: PushEvent) => any): void;
 	addEventListener(event: 'sync', fn: (event?: SyncEvent) => any): void;
 
-  fetch(request: Request|string): Promise<Response>;
-  skipWaiting(): void;
+	fetch(request: Request | string): Promise<Response>;
+	skipWaiting(): void;
 }

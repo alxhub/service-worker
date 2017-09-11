@@ -71,6 +71,7 @@ export class Driver implements UpdateSource {
   constructor(private scope: ServiceWorkerGlobalScope, private adapter: Adapter, private db: Database) {
     // Listen to fetch events.
     this.scope.addEventListener('fetch', (event) => this.onFetch(event!));
+    this.scope.addEventListener('message', (event) => this.onMessage(event!));
 
     this.idle = new IdleScheduler(this.adapter, SYNC_THRESHOLD);
   }
@@ -87,6 +88,18 @@ export class Driver implements UpdateSource {
     // Past this point, the SW commits to handling the request itself. This could still fail (and result
     // in `state` being set to `SAFE_MODE`), but even in that case the SW will still deliver a response.
     event.respondWith(this.handleFetch(event));
+  }
+
+  private onMessage(event: MessageEvent & ExtendableEvent): void {
+    if (this.state === DriverReadyState.SAFE_MODE) {
+      return;
+    }
+
+    if (event.source !== )
+
+    const client 
+
+    event.waitUntil(this.)
   }
 
   private async handleFetch(event: FetchEvent): Promise<Response> {
@@ -207,7 +220,7 @@ export class Driver implements UpdateSource {
     // Wait for the scheduling of initialization of all versions in the manifest. Ordinarily this just
     // schedules the initializations to happen during the next idle period, but in development mode
     // this might actually wait for the full initialization.
-    const eachInit = Object
+    await Promise.all(Object
       .keys(manifests)
       .map(async (hash: ManifestHash) => {
         try {
@@ -218,8 +231,7 @@ export class Driver implements UpdateSource {
         } catch (err) {
           return false;
         }
-      });
-    await Promise.all(eachInit);
+      }));
 
     // Map each client ID to its associated hash. Along the way, verify that the hash is still valid
     // for that clinet ID. It should not be possible for a client to still be associated with a hash
@@ -239,11 +251,6 @@ export class Driver implements UpdateSource {
     if (!this.versions.has(latest.latest)) {
       throw new Error(`Invariant violated (initialize): latest hash ${latest.latest} has no known manifest`);
     }
-
-    this.clientVersionMap.forEach((version, clientId) => {
-    });
-    this.versions.forEach((_, version) => {
-    });
   }
 
   private lookupVersionByHash(hash: ManifestHash, debugName: string = 'lookupVersionByHash'): AppVersion {
@@ -411,12 +418,7 @@ export class Driver implements UpdateSource {
 
     await this.sync();
 
-    // TODO: notify applications about the newly active update.
-    
-    this.clientVersionMap.forEach((version, clientId) => {
-    });
-    this.versions.forEach((_, version) => {
-    });
+    this.notifyClientsAboutUpdate();
   }
 
   async checkForUpdate(): Promise<boolean> {
@@ -549,6 +551,33 @@ export class Driver implements UpdateSource {
       }, Promise.resolve<Response|null>(null))
   }
 
+  async activateUpdate(clientId: ClientId): Promise<void> {
+    await this.initialized;
+
+    const client = await this.scope.clients.get(clientId);
+
+    const existing = this.clientVersionMap.get(clientId);
+    let previous: Object|undefined = undefined;
+
+    if (existing !== undefined) {
+      const existingVersion = this.versions.get(existing)!;
+      previous = existingVersion.appData || existing;
+    }
+
+    this.clientVersionMap.set(clientId, this.latestHash!);
+    await this.sync();
+
+    const current = this.versions.get(this.latestHash!)!;
+
+    const notice = {
+      type: 'UPDATE_ACTIVATED',
+      previous,
+      current: current.appData || this.latestHash!,
+    };
+
+    client.postMessage(notice);
+  }
+
   async lookupResourceWithoutHash(url: string): Promise<CacheState|null> {
     await this.initialized;
     const version = this.versions.get(this.latestHash!)!;
@@ -559,5 +588,39 @@ export class Driver implements UpdateSource {
     await this.initialized;
     const version = this.versions.get(this.latestHash!)!;
     return version.previouslyCachedResources();
+  }
+
+  async notifyClientsAboutUpdate(): Promise<void> {
+    await this.initialized;
+
+    const clients = await this.scope.clients.matchAll();
+    const next = this.versions.get(this.latestHash!)!;
+    
+    await clients.reduce(async (previous, client) => {
+      await previous;
+
+      // Firstly, determine which version this client is on.
+      const version = this.clientVersionMap.get(client.id);
+      if (version === undefined) {
+        // Unmapped client - assume it's the latest.
+        return;
+      }
+
+      if (version === this.latestHash) {
+        // Client is already on the latest version, no need for a notification.
+        return;
+      }
+
+      const current = this.versions.get(version)!;
+
+      // Send a notice.
+      const notice = {
+        type: 'UPDATE_AVAILABLE',
+        current: current.appData || version,
+        available: next.appData || this.latestHash!,
+      }
+      client.postMessage(notice);
+      
+    }, Promise.resolve());
   }
 }
