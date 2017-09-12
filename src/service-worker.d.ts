@@ -48,7 +48,7 @@ interface CacheStorageOptions {
 
 // Client API
 
-interface Client {
+declare class Client {
 	frameType: ClientFrameType;
 	id: string;
 	url: string;
@@ -133,7 +133,7 @@ interface ServiceWorkerGlobalScope {
 	registration: ServiceWorkerRegistration;
 
 	addEventListener(event: 'activate', fn: (event?: ExtendableEvent) => any): void;
-	addEventListener(event: 'message', fn: (event?: MessageEvent & ExtendableEvent) => any): void;
+	addEventListener(event: 'message', fn: (event?: ExtendableMessageEvent) => any): void;
 	addEventListener(event: 'fetch', fn: (event?: FetchEvent) => any): void;
 	addEventListener(event: 'install', fn: (event?: ExtendableEvent) => any): void;
 	addEventListener(event: 'push', fn: (event?: PushEvent) => any): void;

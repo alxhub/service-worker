@@ -7,6 +7,10 @@ export class Adapter {
     return new Response(body, init);
   }
 
+  isClient(source: any): source is Client {
+    return (source instanceof Client);
+  }
+
   get time(): number {
     return Date.now();
   }

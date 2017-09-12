@@ -242,7 +242,7 @@ export class DataGroup {
             if (age <= this.config.maxAge) {
               // Successful match from the cache. Use the response, after marking it as having
               // been accessed.
-              await lru.accessed(req.url);
+              lru.accessed(req.url);
               return res;
             }
 

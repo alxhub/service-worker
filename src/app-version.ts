@@ -32,7 +32,7 @@ export class AppVersion implements UpdateSource {
     // created for it, of a type that depends on the configuration mode.
     this.assetGroups = (manifest.assetGroups || []).map(config => {
       // Every asset group has a cache that's prefixed by the manifest hash and the name of the group.
-      const prefix = `${this.manifestHash}:assets:${config.name}`;
+      const prefix = `${this.manifestHash}:assets`;
       // Check the caching mode, which determines when resources will be fetched/updated.
       switch (config.mode) {
         case 'prefetch':
@@ -46,7 +46,7 @@ export class AppVersion implements UpdateSource {
     this.assetGroups.forEach(group => this.assetGroupsByName.set(group.name, group));
 
     // Process each `DataGroup` declared in the manifest.
-    this.dataGroups = (manifest.dataGroups || []).map(config => new DataGroup(this.scope, this.adapter, config, this.database, `data:${config.name}`));
+    this.dataGroups = (manifest.dataGroups || []).map(config => new DataGroup(this.scope, this.adapter, config, this.database, `data`));
   }
 
   /**
@@ -101,7 +101,7 @@ export class AppVersion implements UpdateSource {
       }
 
       return group.handleFetch(req, context);
-    }, asset);
+    }, Promise.resolve(null));
   }
 
   async lookupResourceWithHash(url: string, hash: string): Promise<Response|null> {

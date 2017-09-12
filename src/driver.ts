@@ -90,16 +90,56 @@ export class Driver implements UpdateSource {
     event.respondWith(this.handleFetch(event));
   }
 
-  private onMessage(event: MessageEvent & ExtendableEvent): void {
+  private onMessage(event: ExtendableMessageEvent): void {
     if (this.state === DriverReadyState.SAFE_MODE) {
       return;
     }
+    if (!this.adapter.isClient(event.source)) {
+      return;
+    }
 
-    if (event.source !== )
+    const data = event.data;
+    if (!data || !data.action) {
+      return;
+    }
+    switch (data.action) {
+      case 'CHECK_FOR_UPDATE':
+        event.waitUntil(this.checkForUpdate());
+        break;
+      case 'UPDATE':
+        event.waitUntil(this.updateClient(event.source));
+    }
+  }
 
-    const client 
+  private async updateClient(client: Client): Promise<void> {
+    // Figure out which version the client is on. If it's not on the latest, it needs to be moved.
+    const version = this.clientVersionMap.get(client.id);
+    if (version === this.latestHash) {
+      // Nothing to do, this client is already on the latest version.
+      return;
+    }
 
-    event.waitUntil(this.)
+    // Switch the client over.
+    const existing = this.clientVersionMap.get(client.id);
+    let previous: Object|undefined = undefined;
+
+    if (existing !== undefined) {
+      const existingVersion = this.versions.get(existing)!;
+      previous = existingVersion.appData || existing;
+    }
+
+    this.clientVersionMap.set(client.id, this.latestHash!);
+    await this.sync();
+
+    const current = this.versions.get(this.latestHash!)!;
+
+    const notice = {
+      type: 'UPDATE_ACTIVATED',
+      previous,
+      current: current.appData || this.latestHash!,
+    };
+
+    client.postMessage(notice);
   }
 
   private async handleFetch(event: FetchEvent): Promise<Response> {
@@ -549,33 +589,6 @@ export class Driver implements UpdateSource {
         // No result has been found yet. Try the next `AppVersion`.
         return version.lookupResourceWithHash(url, hash);
       }, Promise.resolve<Response|null>(null))
-  }
-
-  async activateUpdate(clientId: ClientId): Promise<void> {
-    await this.initialized;
-
-    const client = await this.scope.clients.get(clientId);
-
-    const existing = this.clientVersionMap.get(clientId);
-    let previous: Object|undefined = undefined;
-
-    if (existing !== undefined) {
-      const existingVersion = this.versions.get(existing)!;
-      previous = existingVersion.appData || existing;
-    }
-
-    this.clientVersionMap.set(clientId, this.latestHash!);
-    await this.sync();
-
-    const current = this.versions.get(this.latestHash!)!;
-
-    const notice = {
-      type: 'UPDATE_ACTIVATED',
-      previous,
-      current: current.appData || this.latestHash!,
-    };
-
-    client.postMessage(notice);
   }
 
   async lookupResourceWithoutHash(url: string): Promise<CacheState|null> {
